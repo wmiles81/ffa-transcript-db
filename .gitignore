@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+
+# Database & data files
+data/transcripts.db
+data/transcripts.db-wal
+data/transcripts.db-shm
+data/cookies.json
+
+# Build output
+dist/
+
+# Backups
+backup/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

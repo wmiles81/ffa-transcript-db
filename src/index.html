@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FFA Transcript DB — Search & Browse</title>
+  <meta name="description"
+    content="Searchable database for publishing summit transcripts. Full-text search across lectures, Q&As, and work sessions." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+
+<body>
+  <div id="app">
+    <!-- Header / Stats Bar -->
+    <header class="app-header">
+      <div class="header-left">
+        <h1 class="logo">
+          <span class="logo-icon">📚</span>
+          <span class="logo-text">Transcript<span class="logo-accent">DB</span></span>
+        </h1>
+      </div>
+      <div class="stats-bar" id="stats-bar">
+        <div class="stat">
+          <span class="stat-value" id="stat-sources">—</span>
+          <span class="stat-label">Sources</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-lectures">—</span>
+          <span class="stat-label">Lectures</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-transcripts">—</span>
+          <span class="stat-label">Transcripts</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-chunks">—</span>
+          <span class="stat-label">Chunks</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <span class="auth-dot" id="auth-status" title="Not logged in"></span>
+        <button class="theme-toggle" id="theme-toggle" title="Switch theme">☀️</button>
+        <button class="icon-btn" id="settings-btn" title="AI Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
+        <kbd class="shortcut-hint" id="search-shortcut">⌘K</kbd>
+      </div>
+    </header>
+
+    <!-- Main Layout -->
+    <div class="main-layout">
+      <!-- Sidebar -->
+      <aside class="sidebar" id="sidebar">
+        <!-- Teachable Courses -->
+        <div class="sidebar-section">
+          <div class="sidebar-heading-row">
+            <h3 class="sidebar-heading">Sources</h3>
+            <button class="sidebar-add-btn" id="add-course-btn" title="Add Teachable course">+</button>
+          </div>
+          <div class="source-dropdown" id="source-dropdown">
+            <button class="source-dropdown-trigger" id="source-dropdown-trigger">
+              <span id="source-dropdown-label">No sources</span>
+              <span class="source-dropdown-chevron">▾</span>
+            </button>
+            <div class="source-dropdown-panel hidden" id="source-dropdown-panel">
+              <div id="course-list" class="course-list"></div>
+              <button class="course-delete-btn hidden" id="delete-selected-courses">🗑 Delete Selected</button>
+              <div class="delete-confirm-bar hidden" id="delete-confirm-bar">
+                <span id="delete-confirm-msg">Really delete?</span>
+                <button class="confirm-yes-btn" id="delete-confirm-yes">Yes, delete</button>
+                <button class="confirm-no-btn" id="delete-confirm-no">Cancel</button>
+              </div>
+            </div>
+          </div>
+          <button class="auth-btn" id="login-btn">🔐 Log in to Teachable</button>
+        </div>
+
+        <!-- Add Course Panel -->
+        <div id="add-course-panel" class="add-course-panel hidden">
+          <h4>Select Courses to Add</h4>
+          <div id="course-picker-loading" class="course-picker-loading">Loading courses from Teachable…<div
+              class="picker-bar-track">
+              <div class="picker-bar"></div>
+            </div>
+          </div>
+          <div id="course-picker-list" class="course-picker-list"></div>
+          <div class="add-course-actions">
+            <button class="add-course-submit" id="start-scrape-btn" disabled>Scrape Selected</button>
+            <button class="add-course-cancel" id="cancel-add-course">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Scrape Progress -->
+        <div id="scrape-progress" class="scrape-progress hidden">
+          <div class="scrape-msg" id="scrape-message">Starting...</div>
+          <div class="scrape-bar-container">
+            <div class="scrape-bar" id="scrape-bar"></div>
+          </div>
+          <div class="scrape-pct" id="scrape-pct">0%</div>
+        </div>
+
+        <hr class="sidebar-divider" />
+
+        <!-- Existing Source / Type / Lecture Filters -->
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Source</h3>
+          <select id="filter-source" class="filter-select" title="Filter by source">
+            <option value="">All Sources</option>
+          </select>
+        </div>
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Type</h3>
+          <div class="filter-chips" id="filter-types">
+            <button class="chip active" data-type="">All</button>
+            <button class="chip" data-type="Lesson">Lessons</button>
+            <button class="chip" data-type="Pre-Lesson Q&A">Pre Q&A</button>
+            <button class="chip" data-type="Post-Lesson Q&A">Post Q&A</button>
+            <button class="chip" data-type="Work Session">Work Sessions</button>
+          </div>
+        </div>
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Lectures</h3>
+          <div class="lecture-list" id="lecture-list">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </aside>
+
+      <!-- Content Area -->
+      <main class="content">
+        <!-- Search Bar -->
+        <div class="search-container">
+          <div class="search-bar" id="search-bar">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input type="text" id="search-input" class="search-input"
+              placeholder="Search transcripts... (e.g., LLC formation, pen names, Claude)" autocomplete="off"
+              spellcheck="false" />
+            <button class="ai-toggle" id="ai-toggle" title="Toggle AI Search">
+              <span class="ai-toggle-icon">✨</span>
+              <span class="ai-toggle-label">AI</span>
+            </button>
+            <button class="search-clear hidden" id="search-clear" title="Clear search">✕</button>
+          </div>
+          <div class="search-meta" id="search-meta"></div>
+        </div>
+
+        <!-- AI Answer Area -->
+        <div id="ai-answer-container" class="hidden">
+          <div class="ai-answer-card">
+            <div class="ai-answer-header">
+              <span class="ai-badge">✨ AI Answer</span>
+              <span class="ai-model-label" id="ai-model-label"></span>
+            </div>
+            <div class="ai-answer-body" id="ai-answer-body">
+              <div class="ai-thinking" id="ai-thinking">Searching transcripts and thinking...</div>
+            </div>
+            <div class="ai-answer-footer hidden" id="ai-answer-footer">
+              <span class="ai-chunks-used" id="ai-chunks-used"></span>
+              <span class="ai-usage" id="ai-usage"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Results / Transcript View -->
+        <div id="view-container">
+          <!-- Default: Browse View -->
+          <div id="browse-view">
+            <div class="section-header">
+              <h2 id="browse-title">All Transcripts</h2>
+            </div>
+            <div class="transcript-grid" id="transcript-grid">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+
+          <!-- Search Results View -->
+          <div id="search-view" class="hidden">
+            <div class="section-header">
+              <h2 id="search-title">Search Results</h2>
+            </div>
+            <div class="results-list" id="results-list">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+
+          <!-- Transcript Detail View -->
+          <div id="detail-view" class="hidden">
+            <button class="back-btn" id="back-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              Back
+            </button>
+            <div class="transcript-detail" id="transcript-detail">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay hidden" id="settings-overlay">
+    <div class="modal" id="settings-modal">
+      <div class="modal-header">
+        <h2>AI Settings</h2>
+        <button class="modal-close" id="settings-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-section">
+          <label class="settings-label">OpenRouter API Key</label>
+          <div class="settings-row">
+            <input type="password" id="settings-api-key" class="settings-input" placeholder="sk-or-..." />
+            <button class="settings-btn" id="settings-save-key">Save</button>
+          </div>
+          <div class="settings-hint">
+            Get a key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>
+          </div>
+          <div class="settings-status" id="settings-key-status"></div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-row">
+            <label class="settings-label">Model</label>
+            <button class="settings-btn" id="settings-refresh-models" title="Fetch models">↻ Refresh</button>
+          </div>
+          <div class="model-dropdown" id="model-dropdown">
+            <button class="model-trigger" id="model-trigger">Select a model</button>
+            <div class="model-list hidden" id="model-list">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+          <div class="settings-status" id="settings-model-status"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Confirmation Modal -->
+  <div class="delete-modal-overlay hidden" id="delete-modal-overlay">
+    <div class="delete-modal">
+      <p id="delete-modal-msg">Delete items?</p>
+      <div class="delete-modal-actions">
+        <button class="delete-modal-confirm" id="delete-modal-confirm">Yes, delete</button>
+        <button class="delete-modal-cancel" id="delete-modal-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+
+</html>
