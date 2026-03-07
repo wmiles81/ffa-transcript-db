@@ -241,9 +241,10 @@ app.get('/api/search', (req, res) => {
     }
 
     // --- Course results ---
+    // Skip when user filtered to a specific source and didn't select courses
     let courseResults = [];
     let courseTotal = 0;
-    {
+    if (!(source_id && !courseFilter)) {
         let courseWhere = [];
         let courseParams = [];
         if (courseFilter) {
@@ -521,8 +522,9 @@ app.post('/api/ai/ask', async (req, res) => {
     }
 
     // Step 2b: Retrieve course context chunks via FTS5
+    // Skip when user filtered to a specific source and didn't select courses
     let courseContextChunks = [];
-    if (ftsQuery.length > 0) {
+    if (ftsQuery.length > 0 && !(source_id && !courseFilter)) {
         let courseWhere = [];
         let courseParams = [];
         if (courseFilter) {
@@ -567,10 +569,10 @@ app.post('/api/ai/ask', async (req, res) => {
 
 When answering:
 - Base your answers ONLY on the provided excerpts
+- Include as much direct information from the source material as possible — quote or closely paraphrase rather than summarize
 - Cite specific lectures, courses, and timestamps when referencing material
 - If the excerpts don't contain enough information to fully answer, say so clearly
-- Be concise but thorough
-- Use bullet points for multiple items`;
+- Format your response however best fits the content — use the user's instructions for formatting preferences`;
 
     const userMessage = allContext.length > 0
         ? `Based on the following transcript and course excerpts, please answer this question:\n\n**Question:** ${question}\n\n---\n\n${contextText}`

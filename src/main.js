@@ -177,6 +177,8 @@ async function loadSources() {
 
         // Re-render the unified sidebar list
         renderCourseList();
+        // Refresh header stats whenever source data changes
+        loadStats();
     } catch (e) {
         console.error('Failed to load sources:', e);
     }
@@ -187,10 +189,14 @@ async function loadLectures() {
         // If a course is selected, show course lectures instead
         if (state.activeSource && state.activeSource.startsWith('course-')) {
             const courseId = state.activeSource.replace('course-', '');
-            const course = (await api('/api/courses')).find(c => c.id === Number(courseId));
-            if (course) {
-                renderLectureList([{ lecture: course.title, lecture_date: course.scraped_at?.split('T')[0], transcript_count: course.lecture_count }]);
-            } else {
+            try {
+                const lectures = await api(`/api/courses/${courseId}/lectures`);
+                renderLectureList(lectures.map(lec => ({
+                    lecture: lec.title,
+                    lecture_date: lec.section_title || '',
+                    transcript_count: lec.chunk_count || 0,
+                })));
+            } catch {
                 renderLectureList([]);
             }
             return;
@@ -1006,9 +1012,13 @@ function renderCourseList() {
             const id = label.dataset.id;
             if (type === 'course') {
                 const courseId = Number(id.replace('crs-', ''));
-                loadLectures(courseId);
+                state.activeSource = `course-${courseId}`;
+                el.filterSource.value = `course-${courseId}`;
+                loadLectures();
+                loadTranscripts();
             } else if (type === 'source') {
                 const sourceId = id.replace('src-', '');
+                state.activeSource = sourceId;
                 el.filterSource.value = sourceId;
                 el.filterSource.dispatchEvent(new Event('change'));
             }
@@ -1114,7 +1124,7 @@ document.addEventListener('click', (e) => {
     }
 });
 
-async function startScrape(url) {
+async function startScrape(url, { hideOnDone = true } = {}) {
     if (!state.loggedIn) {
         alert('Please log in to Teachable first.');
         return;
@@ -1153,7 +1163,7 @@ async function startScrape(url) {
                         el.scrapeMessage.textContent = `✅ Scraped ${data.lectureCount} lectures from "${data.title}"`;
                         await loadCourses();
                         await loadStats();
-                        setTimeout(() => el.scrapeProgress.classList.add('hidden'), 3000);
+                        if (hideOnDone) setTimeout(() => el.scrapeProgress.classList.add('hidden'), 3000);
                     }
                     if (data.error) {
                         el.scrapeMessage.textContent = `❌ ${data.error}`;
@@ -1225,8 +1235,9 @@ function setupCourseListeners() {
             if (checked.length === 0) return;
 
             el.addCoursePanel.classList.add('hidden');
-            for (const cb of checked) {
-                await startScrape(cb.value);
+            for (let i = 0; i < checked.length; i++) {
+                const isLast = i === checked.length - 1;
+                await startScrape(checked[i].value, { hideOnDone: isLast });
             }
         });
     }
