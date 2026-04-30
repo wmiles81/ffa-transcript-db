@@ -936,6 +936,14 @@ body {
   background: var(--accent-glow);
 }
 
+.help-btn {
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 0 8px;
+}
+
 /* --- AI Toggle Button --- */
 .ai-toggle {
   display: flex;

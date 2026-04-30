@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TranscriptDB — Help</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./style.css" />
+  <style>
+    body {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+    }
+
+    .help-header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-medium);
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .help-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .help-back-link {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 13px;
+      padding: 5px 10px;
+      border-radius: var(--radius-sm);
+      transition: color var(--transition-fast), background var(--transition-fast);
+    }
+
+    .help-back-link:hover {
+      color: var(--text-primary);
+      background: var(--bg-hover);
+    }
+
+    .help-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .help-title span {
+      color: var(--accent-primary);
+    }
+
+    .theme-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .help-layout {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      height: calc(100vh - 56px);
+    }
+
+    /* ---- Nav Tree ---- */
+    .help-nav {
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border-medium);
+      overflow-y: auto;
+      padding: 16px 0;
+    }
+
+    .nav-section-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      padding: 12px 16px 4px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 16px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border-left: 2px solid transparent;
+      transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+      user-select: none;
+    }
+
+    .nav-item:hover {
+      color: var(--text-primary);
+      background: var(--bg-hover);
+    }
+
+    .nav-item.active {
+      color: var(--accent-primary);
+      border-left-color: var(--accent-primary);
+      background: var(--accent-glow);
+      font-weight: 500;
+    }
+
+    .nav-item-icon {
+      font-size: 14px;
+      width: 18px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    /* ---- Content Panel ---- */
+    .help-content {
+      overflow-y: auto;
+      padding: 40px 56px;
+      max-width: 820px;
+    }
+
+    .help-section {
+      display: none;
+    }
+
+    .help-section.active {
+      display: block;
+    }
+
+    .help-section h1 {
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+      line-height: 1.2;
+    }
+
+    .help-section .section-subtitle {
+      font-size: 15px;
+      color: var(--text-secondary);
+      margin-bottom: 32px;
+      line-height: 1.6;
+    }
+
+    .help-section h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 32px 0 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .help-section h2:first-of-type {
+      margin-top: 0;
+    }
+
+    .help-section p {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.7;
+      margin-bottom: 12px;
+    }
+
+    .help-section ul,
+    .help-section ol {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.7;
+      margin: 0 0 16px 20px;
+    }
+
+    .help-section li {
+      margin-bottom: 6px;
+    }
+
+    .help-section strong {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    .tip-box {
+      background: var(--accent-glow);
+      border: 1px solid var(--border-accent);
+      border-radius: var(--radius-md);
+      padding: 14px 18px;
+      margin: 16px 0;
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    .tip-box strong {
+      color: var(--accent-primary);
+    }
+
+    .info-box {
+      background: var(--secondary-glow);
+      border: 1px solid rgba(44, 182, 160, 0.25);
+      border-radius: var(--radius-md);
+      padding: 14px 18px;
+      margin: 16px 0;
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    .info-box strong {
+      color: var(--secondary);
+    }
+
+    kbd {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-medium);
+      border-radius: 4px;
+      padding: 1px 6px;
+      color: var(--text-primary);
+    }
+
+    .shortcut-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 13px;
+    }
+
+    .shortcut-table th {
+      text-align: left;
+      padding: 8px 12px;
+      color: var(--text-muted);
+      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--border-medium);
+    }
+
+    .shortcut-table td {
+      padding: 10px 12px;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border-subtle);
+      vertical-align: middle;
+    }
+
+    .shortcut-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 20px;
+      white-space: nowrap;
+    }
+
+    .badge-lesson   { background: rgba(240,168,48,0.15); color: var(--accent-primary); }
+    .badge-preqa    { background: rgba(44,182,160,0.15); color: var(--secondary); }
+    .badge-postqa   { background: rgba(100,149,237,0.15); color: #6495ed; }
+    .badge-work     { background: rgba(144,238,144,0.15); color: #82c882; }
+    .badge-course   { background: rgba(200,100,200,0.15); color: #c86cc8; }
+
+    .step-list {
+      list-style: none;
+      margin: 0 0 16px;
+      padding: 0;
+      counter-reset: steps;
+    }
+
+    .step-list li {
+      display: flex;
+      gap: 14px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      counter-increment: steps;
+    }
+
+    .step-list li:last-child {
+      border-bottom: none;
+    }
+
+    .step-list li::before {
+      content: counter(steps);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      height: 24px;
+      background: var(--accent-glow);
+      border: 1px solid var(--border-accent);
+      border-radius: 50%;
+      color: var(--accent-primary);
+      font-size: 11px;
+      font-weight: 700;
+      margin-top: 1px;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <header class="help-header">
+    <div class="help-header-left">
+      <a href="/" class="help-back-link">
+        ← Back to TranscriptDB
+      </a>
+      <span style="color: var(--border-medium)">|</span>
+      <span class="help-title">📚 Transcript<span>DB</span> Help</span>
+    </div>
+    <button class="theme-toggle" id="theme-toggle" title="Switch theme">☀️</button>
+  </header>
+
+  <div class="help-layout">
+    <!-- Nav Tree -->
+    <nav class="help-nav">
+      <div class="nav-section-label">Overview</div>
+      <div class="nav-item active" data-section="overview"><span class="nav-item-icon">🏠</span> What is TranscriptDB?</div>
+
+      <div class="nav-section-label">Core Features</div>
+      <div class="nav-item" data-section="browsing"><span class="nav-item-icon">🗂</span> Browsing Content</div>
+      <div class="nav-item" data-section="searching"><span class="nav-item-icon">🔍</span> Searching</div>
+      <div class="nav-item" data-section="ai-search"><span class="nav-item-icon">✨</span> AI Search</div>
+      <div class="nav-item" data-section="detail"><span class="nav-item-icon">📄</span> Transcript Detail</div>
+
+      <div class="nav-section-label">Content & Sources</div>
+      <div class="nav-item" data-section="sources"><span class="nav-item-icon">📦</span> Sources & Filters</div>
+      <div class="nav-item" data-section="types"><span class="nav-item-icon">🏷</span> Content Types</div>
+      <div class="nav-item" data-section="teachable"><span class="nav-item-icon">🎓</span> Teachable Courses</div>
+
+      <div class="nav-section-label">Configuration</div>
+      <div class="nav-item" data-section="settings"><span class="nav-item-icon">⚙️</span> AI Settings</div>
+      <div class="nav-item" data-section="themes"><span class="nav-item-icon">🎨</span> Themes</div>
+      <div class="nav-item" data-section="shortcuts"><span class="nav-item-icon">⌨️</span> Keyboard Shortcuts</div>
+    </nav>
+
+    <!-- Content -->
+    <main class="help-content">
+
+      <!-- Overview -->
+      <section class="help-section active" id="section-overview">
+        <h1>What is TranscriptDB?</h1>
+        <p class="section-subtitle">
+          TranscriptDB is a personal, locally-run search engine for your Future Fiction Academy content — weekly summit recordings and Teachable course material. Everything lives on your machine in a SQLite database.
+        </p>
+
+        <h2>What's in it</h2>
+        <p>The database holds two types of content side by side:</p>
+        <ul>
+          <li><strong>Summit transcripts</strong> — imported from JSON files. These are the weekly FFA Publishing Summit recordings: pre-lesson Q&As, post-lesson Q&As, full lessons, and work sessions.</li>
+          <li><strong>Teachable course content</strong> — scraped directly from future-fiction-academy.teachable.com after you log in. The text of each lecture is extracted and stored for searching.</li>
+        </ul>
+
+        <h2>How it works</h2>
+        <p>
+          All content is split into small overlapping chunks and indexed using SQLite's built-in full-text search (FTS5). When you search, the database finds the most relevant chunks instantly — no network required.
+        </p>
+        <p>
+          The AI Search feature goes further: it retrieves the most relevant chunks and sends them to an AI model via OpenRouter, which synthesizes a direct answer with citations.
+        </p>
+
+        <h2>The stats bar</h2>
+        <p>The four numbers at the top of the app tell you what's loaded:</p>
+        <ul>
+          <li><strong>Sources</strong> — total number of transcript sources + scraped courses</li>
+          <li><strong>Lectures</strong> — individual sessions across all sources</li>
+          <li><strong>Transcripts</strong> — individual transcript files (a lecture may have multiple: lesson + Q&As)</li>
+          <li><strong>Chunks</strong> — the actual indexed text segments used for search and AI context</li>
+        </ul>
+      </section>
+
+      <!-- Browsing -->
+      <section class="help-section" id="section-browsing">
+        <h1>Browsing Content</h1>
+        <p class="section-subtitle">When no search is active, the main area shows the Browse view — a grid of all available transcripts and course lectures.</p>
+
+        <h2>The transcript grid</h2>
+        <p>Each card in the grid shows:</p>
+        <ul>
+          <li>The <strong>lecture name</strong> (or course title for Teachable content)</li>
+          <li>The <strong>filename or section</strong> it belongs to</li>
+          <li>A <strong>type badge</strong> (Lesson, Pre Q&A, Post Q&A, Work Session, or Course)</li>
+          <li>The <strong>date</strong> and <strong>duration</strong> if available</li>
+        </ul>
+        <p>Click any card to open its full transcript in the <strong>Detail view</strong>.</p>
+
+        <h2>The Sessions list</h2>
+        <p>
+          The left sidebar's <strong>Sessions</strong> list shows all distinct lecture names (or course sections, when a Teachable course is selected). Click a session to narrow the grid to only that session's content. Click <strong>All Lectures</strong> at the top to clear the selection.
+        </p>
+
+        <h2>Returning to browse</h2>
+        <p>
+          From the Detail or Search view, click the <strong>← Back</strong> button or press <kbd>Escape</kbd> to return. If you were viewing a search result, Escape goes back to search results; from search results, it returns to browse.
+        </p>
+      </section>
+
+      <!-- Searching -->
+      <section class="help-section" id="section-searching">
+        <h1>Searching</h1>
+        <p class="section-subtitle">Full-text search runs entirely on your machine using SQLite FTS5 — it's fast and works offline.</p>
+
+        <h2>How to search</h2>
+        <p>Type anything into the search bar and results appear automatically after a short pause. Press <kbd>Enter</kbd> to search immediately. Press <kbd>⌘K</kbd> (or <kbd>Ctrl+K</kbd>) from anywhere to focus the search bar.</p>
+
+        <div class="tip-box">
+          <strong>Tip:</strong> FTS5 uses a Porter stemmer, so searching for "publish" will also match "published", "publishing", "publisher", etc. You don't need to worry about exact word forms.
+        </div>
+
+        <h2>Search results</h2>
+        <p>Each result card shows the matching chunk with the matched terms highlighted. The result count line beneath the search bar tells you how many matches were found across transcripts and courses.</p>
+        <p>Click a result card from a <strong>transcript source</strong> to open the full transcript with your search terms highlighted.</p>
+        <p>Course lecture results (marked with a <span class="badge badge-course">Course</span> badge) also open a full-text view of that lecture.</p>
+
+        <h2>Filtering search results</h2>
+        <p>All active filters apply to search results too:</p>
+        <ul>
+          <li><strong>Source dropdown</strong> — limit to one transcript source or course</li>
+          <li><strong>Type chips</strong> — limit to one content type</li>
+          <li><strong>Session</strong> — limit to a specific lecture/session</li>
+        </ul>
+
+        <h2>Clearing search</h2>
+        <p>Click the <strong>✕</strong> button that appears inside the search bar, or clear the text manually. The view returns to Browse.</p>
+      </section>
+
+      <!-- AI Search -->
+      <section class="help-section" id="section-ai-search">
+        <h1>AI Search</h1>
+        <p class="section-subtitle">AI Search combines full-text retrieval with an AI language model to give you synthesized answers drawn directly from your content.</p>
+
+        <h2>Enabling AI Search</h2>
+        <p>Click the <strong>✨ AI</strong> button in the search bar to toggle AI mode on. The button turns amber when active and the search placeholder changes to indicate AI mode.</p>
+        <div class="info-box">
+          <strong>Requires setup:</strong> AI Search needs an OpenRouter API key and a selected model. If neither is configured, the settings panel opens automatically when you try to search. See the <strong>AI Settings</strong> section for setup instructions.
+        </div>
+
+        <h2>How it works</h2>
+        <ol>
+          <li>You type a question and press <kbd>Enter</kbd> (AI mode does not auto-search as you type — it waits for Enter).</li>
+          <li>The server runs a full-text search to find the most relevant transcript and course chunks.</li>
+          <li>Those chunks are assembled into context and sent to the selected AI model via OpenRouter.</li>
+          <li>The model's answer streams back in real time and is displayed in the amber answer card above the results.</li>
+        </ol>
+
+        <div class="tip-box">
+          <strong>Tip:</strong> Ask specific questions rather than keyword searches. "What did the instructors say about pricing audiobooks?" works better in AI mode than plain search.
+        </div>
+
+        <h2>The answer card</h2>
+        <p>The answer card shows:</p>
+        <ul>
+          <li>The AI's synthesized answer, streaming in as it is generated</li>
+          <li>The <strong>model name</strong> used for this response</li>
+          <li>After completion: how many <strong>transcript chunks</strong> were used as context, and the <strong>token count</strong> (in / out)</li>
+        </ul>
+
+        <h2>Costs</h2>
+        <p>Each AI search query uses tokens from your OpenRouter account. The cost depends on the model selected. Cheaper models (e.g., Gemini Flash, Llama) cost fractions of a cent per query; premium models (e.g., GPT-4o, Claude) cost more. The token count shown after each response helps you track usage.</p>
+
+        <h2>Stopping a query</h2>
+        <p>If you start a new AI search before the previous one finishes, the previous request is automatically cancelled.</p>
+      </section>
+
+      <!-- Detail View -->
+      <section class="help-section" id="section-detail">
+        <h1>Transcript Detail</h1>
+        <p class="section-subtitle">The Detail view shows the full text of a single transcript or course lecture.</p>
+
+        <h2>What you'll see</h2>
+        <ul>
+          <li><strong>Header</strong> — lecture name, filename, type badge, date, and duration</li>
+          <li><strong>Full text</strong> — the complete transcript content</li>
+          <li><strong>Timestamps</strong> — time codes like <code>[00:15:30]</code> are styled distinctly for easy scanning</li>
+          <li><strong>Speaker names</strong> — patterns like "Name:" at the start of a paragraph are highlighted to make dialogue easier to follow</li>
+          <li><strong>Search highlights</strong> — if you arrived from a search result, your search terms are highlighted throughout the text</li>
+        </ul>
+
+        <h2>Navigation</h2>
+        <p>Use the <strong>← Back</strong> button at the top left, or press <kbd>Escape</kbd> to return to your previous view.</p>
+      </section>
+
+      <!-- Sources & Filters -->
+      <section class="help-section" id="section-sources">
+        <h1>Sources & Filters</h1>
+        <p class="section-subtitle">The sidebar gives you several ways to narrow what you see in browse and search.</p>
+
+        <h2>Sources dropdown (sidebar top)</h2>
+        <p>
+          The <strong>Sources</strong> section at the top of the sidebar lists all your imported transcript collections and scraped Teachable courses. Click the dropdown to expand it and check/uncheck sources to include or exclude them from search results.
+        </p>
+        <p>
+          To view the content of a single source exclusively, choose it in the <strong>Source</strong> filter dropdown further down in the sidebar. This also changes the Sessions list to show only that source's lectures.
+        </p>
+
+        <h2>Source filter dropdown</h2>
+        <p>
+          The <strong>Source</strong> dropdown below the divider lets you lock the entire view (browse, search, and sessions) to a single transcript source or Teachable course. Choose "All Sources" to show everything.
+        </p>
+
+        <h2>Type filter chips</h2>
+        <p>The <strong>Type</strong> chips filter content by recording type. See the <strong>Content Types</strong> section for what each type means. Only one type can be active at a time; click <strong>All</strong> to clear the type filter.</p>
+
+        <h2>Sessions list</h2>
+        <p>
+          Below the type chips, the <strong>Sessions</strong> list shows all available lecture/session names for the currently selected source. Click a session to narrow the view to only that session. When a Teachable course is selected, this list shows course sections instead.
+        </p>
+      </section>
+
+      <!-- Content Types -->
+      <section class="help-section" id="section-types">
+        <h1>Content Types</h1>
+        <p class="section-subtitle">Summit transcripts are organized by the role they played in each weekly session.</p>
+
+        <table class="shortcut-table">
+          <thead>
+            <tr><th>Badge</th><th>Type</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-lesson">Lesson</span></td>
+              <td><strong>Lesson</strong></td>
+              <td>The main instructional session. Core teaching content for the week.</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-preqa">Pre Q&A</span></td>
+              <td><strong>Pre-Lesson Q&A</strong></td>
+              <td>The Q&A session that happens before the lesson. Often covers questions from the previous week or warm-up discussion.</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-postqa">Post Q&A</span></td>
+              <td><strong>Post-Lesson Q&A</strong></td>
+              <td>The Q&A session after the lesson. Participants ask follow-up questions about the material just covered.</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-work">Work Session</span></td>
+              <td><strong>Work Session</strong></td>
+              <td>Collaborative working sessions where participants work through exercises or projects together.</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-course">Course</span></td>
+              <td><strong>Course</strong></td>
+              <td>Content scraped from a Teachable course lecture. Not from a live summit session.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Teachable Courses -->
+      <section class="help-section" id="section-teachable">
+        <h1>Teachable Courses</h1>
+        <p class="section-subtitle">TranscriptDB can scrape lecture text directly from your enrolled courses on future-fiction-academy.teachable.com and make them searchable alongside your summit transcripts.</p>
+
+        <h2>Logging in</h2>
+        <p>Click <strong>🔐 Log in to Teachable</strong> in the sidebar. A browser window opens (Puppeteer) for you to log in with your Teachable credentials. Once logged in, the auth indicator in the header turns green and the session is saved so you don't need to log in again during the same session.</p>
+
+        <div class="info-box">
+          <strong>Note:</strong> Your Teachable session cookies are stored locally in <code>data/cookies.json</code>. They are not committed to git.
+        </div>
+
+        <h2>Adding a course</h2>
+        <ol class="step-list">
+          <li>Click the <strong>+</strong> button next to the Sources heading. A panel slides open showing your enrolled Teachable courses.</li>
+          <li>Check the courses you want to add.</li>
+          <li>Click <strong>Scrape Selected</strong>. A progress bar shows the scraping progress lecture by lecture.</li>
+          <li>When complete, the new course appears in the Sources dropdown and is immediately searchable.</li>
+        </ol>
+
+        <div class="tip-box">
+          <strong>Tip:</strong> Scraping can take a few minutes for large courses. The progress bar shows the current lecture being processed and the overall percentage.
+        </div>
+
+        <h2>How scraping works</h2>
+        <p>For each lecture, the scraper first tries to download any attached text file (.txt), which gives clean content. If no text file is attached, it extracts the visible text from the lecture page DOM. The text is then chunked and indexed for full-text search and AI context.</p>
+
+        <h2>Deleting a course</h2>
+        <p>Open the Sources dropdown in the sidebar. Check the course you want to remove and click <strong>🗑 Delete Selected</strong>, then confirm. This removes the course and all its indexed content from the database.</p>
+      </section>
+
+      <!-- Settings -->
+      <section class="help-section" id="section-settings">
+        <h1>AI Settings</h1>
+        <p class="section-subtitle">Click the gear icon (⚙) in the top-right header to open AI Settings. This is where you configure the OpenRouter API key and select a model for AI Search.</p>
+
+        <h2>OpenRouter API Key</h2>
+        <p>AI Search routes all requests through <strong>OpenRouter</strong>, which gives you access to hundreds of models from one API key.</p>
+        <ol class="step-list">
+          <li>Go to <strong>openrouter.ai/keys</strong> and create a free account.</li>
+          <li>Generate an API key (starts with <code>sk-or-v1-</code>).</li>
+          <li>Paste the key into the API key field in Settings and click <strong>Save</strong>.</li>
+        </ol>
+        <p>The key is stored locally in <code>data/ai-settings.json</code> and never transmitted anywhere except to OpenRouter when you make AI searches.</p>
+
+        <h2>Selecting a model</h2>
+        <p>After saving your API key, click <strong>↻ Refresh</strong> in the Model section to fetch the current list of available models. Then click the model dropdown and choose one. You can filter the list by typing in the search box.</p>
+        <p>The pricing shown next to each model is per million tokens (input / output). For casual use, models like <strong>google/gemini-flash-1.5</strong> or <strong>meta-llama/llama-3.1-8b-instruct:free</strong> are good starting points.</p>
+
+        <div class="tip-box">
+          <strong>Tip:</strong> Your selected model is saved automatically. It persists across sessions so you don't need to reselect it each time.
+        </div>
+      </section>
+
+      <!-- Themes -->
+      <section class="help-section" id="section-themes">
+        <h1>Themes</h1>
+        <p class="section-subtitle">TranscriptDB ships with four themes. Click the theme toggle button in the top-right header to cycle through them.</p>
+
+        <table class="shortcut-table">
+          <thead>
+            <tr><th>Icon</th><th>Theme</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>🌙</td><td><strong>Dark</strong></td><td>Default. Charcoal background with amber/gold accents.</td></tr>
+            <tr><td>☀️</td><td><strong>Light</strong></td><td>Light grey background, same amber palette adapted for contrast.</td></tr>
+            <tr><td>🌑</td><td><strong>HC Dark</strong></td><td>High contrast dark — pure black with bright amber. Best for eye strain or accessibility.</td></tr>
+            <tr><td>🔆</td><td><strong>HC Light</strong></td><td>High contrast light — pure white with deep amber. Best for bright environments.</td></tr>
+          </tbody>
+        </table>
+        <p>Your chosen theme is saved in the browser's localStorage and remembered on next visit.</p>
+      </section>
+
+      <!-- Keyboard Shortcuts -->
+      <section class="help-section" id="section-shortcuts">
+        <h1>Keyboard Shortcuts</h1>
+        <p class="section-subtitle">TranscriptDB is fully usable from the keyboard.</p>
+
+        <table class="shortcut-table">
+          <thead>
+            <tr><th>Shortcut</th><th>Action</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><kbd>⌘K</kbd> / <kbd>Ctrl+K</kbd></td>
+              <td>Focus the search bar and select all text</td>
+            </tr>
+            <tr>
+              <td><kbd>Enter</kbd></td>
+              <td>Execute search immediately (required in AI mode; optional in regular mode)</td>
+            </tr>
+            <tr>
+              <td><kbd>Escape</kbd></td>
+              <td>
+                Close the Settings modal if open; otherwise go back —
+                from Detail → Search/Browse, from Search (empty) → Browse
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+    </main>
+  </div>
+
+  <script>
+    // Sync theme with main app via localStorage
+    const THEMES = ['dark', 'light', 'hc-dark', 'hc-light'];
+    const THEME_ICONS = { dark: '🌙', light: '☀️', 'hc-dark': '🌑', 'hc-light': '🔆' };
+
+    function applyTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      const toggle = document.getElementById('theme-toggle');
+      const nextIdx = (THEMES.indexOf(theme) + 1) % THEMES.length;
+      if (toggle) toggle.textContent = THEME_ICONS[THEMES[nextIdx]] || '🌙';
+    }
+
+    const saved = localStorage.getItem('tdb-theme') || 'dark';
+    applyTheme(THEMES.includes(saved) ? saved : 'dark');
+
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = THEMES[(THEMES.indexOf(current) + 1) % THEMES.length];
+      applyTheme(next);
+      localStorage.setItem('tdb-theme', next);
+    });
+
+    // Nav item switching
+    const navItems = document.querySelectorAll('.nav-item');
+    const sections = document.querySelectorAll('.help-section');
+
+    navItems.forEach(item => {
+      item.addEventListener('click', () => {
+        const target = item.dataset.section;
+        navItems.forEach(n => n.classList.remove('active'));
+        sections.forEach(s => s.classList.remove('active'));
+        item.classList.add('active');
+        const section = document.getElementById('section-' + target);
+        if (section) {
+          section.classList.add('active');
+          document.querySelector('.help-content').scrollTop = 0;
+        }
+      });
+    });
+  </script>
+</body>
+</html>
