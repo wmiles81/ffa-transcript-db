@@ -716,19 +716,6 @@ app.post('/api/courses/scrape', async (req, res) => {
     res.end();
 });
 
-// GET /api/courses/:id/lectures — List lectures for a course
-app.get('/api/courses/:id/lectures', (req, res) => {
-    const db = getDb();
-    const lectures = db.prepare(`
-        SELECT cl.*, cs.title as section_title
-        FROM course_lectures cl
-        LEFT JOIN course_sections cs ON cl.section_id = cs.id
-        WHERE cl.course_id = ?
-        ORDER BY cs.position, cl.position
-    `).all(req.params.id);
-    res.json(lectures);
-});
-
 // GET /api/courses/lectures/:id — Single lecture detail with chunks
 app.get('/api/courses/lectures/:id', (req, res) => {
     const db = getDb();
@@ -746,6 +733,19 @@ app.get('/api/courses/lectures/:id', (req, res) => {
     ).all(req.params.id);
 
     res.json({ ...lecture, chunks, content: chunks.map(c => c.content).join('\n\n---\n\n') });
+});
+
+// GET /api/courses/:id/lectures — List lectures for a course
+app.get('/api/courses/:id/lectures', (req, res) => {
+    const db = getDb();
+    const lectures = db.prepare(`
+        SELECT cl.*, cs.title as section_title
+        FROM course_lectures cl
+        LEFT JOIN course_sections cs ON cl.section_id = cs.id
+        WHERE cl.course_id = ?
+        ORDER BY cs.position, cl.position
+    `).all(req.params.id);
+    res.json(lectures);
 });
 
 app.delete('/api/courses/:id', (req, res) => {

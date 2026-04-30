@@ -723,7 +723,7 @@ function renderSearchResults(results) {
                 </div>
                 <span class="card-badge badge-course">Course</span>
               </div>
-              <div class="result-snippet">${r.snippet}</div>
+              <div class="result-snippet">${safeSnippet(r.snippet)}</div>
               <div class="result-meta">
                 ${r.duration ? `<span class="card-duration">${r.duration}</span>` : ''}
               </div>
@@ -738,7 +738,7 @@ function renderSearchResults(results) {
                 </div>
                 <span class="card-badge ${badgeClass}">${escapeHtml(r.transcript_type || '')}</span>
               </div>
-              <div class="result-snippet">${r.snippet}</div>
+              <div class="result-snippet">${safeSnippet(r.snippet)}</div>
               <div class="result-meta">
                 ${r.start_timestamp ? `<span class="result-timestamp">⏱ ${r.start_timestamp}</span>` : ''}
                 ${r.lecture_date ? `<span class="card-date">${r.lecture_date}</span>` : ''}
@@ -895,6 +895,17 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function safeSnippet(raw) {
+    if (!raw) return '';
+    const parts = raw.split(/(<mark>|<\/mark>)/);
+    let inMark = false;
+    return parts.map(part => {
+        if (part === '<mark>') { inMark = true; return '<mark>'; }
+        if (part === '</mark>') { inMark = false; return '</mark>'; }
+        return escapeHtml(part);
+    }).join('');
 }
 
 function escapeRegex(str) {
