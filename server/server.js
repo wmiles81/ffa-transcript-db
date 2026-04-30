@@ -766,9 +766,6 @@ app.get('/api/courses/:id/lectures', (req, res) => {
         ${whereClause}
           AND cl.title != 'Start'
           AND cl.title NOT LIKE '%Check Out the FFA Free Community Classes%'
-          AND cl.title NOT IN (
-            SELECT title FROM course_sections WHERE course_id = cl.course_id
-          )
         ORDER BY cs.position, cl.position
     `).all(...params);
     res.json(lectures);

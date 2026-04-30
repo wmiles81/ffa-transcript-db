@@ -261,8 +261,8 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                             const durMatch = text.match(/\((\d+:\d+)\)|\s(\d+:\d+)\s*$/);
                             const title = text.replace(/\(?\d+:\d+\)?/g, '').trim();
                             const cleanTitle = title || text;
-                            // Skip Teachable nav artifacts: "Start" CTAs, section-header links, and promos
-                            if (cleanTitle === 'Start' || sectionTitles.has(cleanTitle) || promoTitles.has(cleanTitle)) return;
+                            // Skip Teachable nav artifacts: "Start" CTAs and promos
+                            if (cleanTitle === 'Start' || promoTitles.has(cleanTitle)) return;
                             const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
                             lectures.push({
                                 title: cleanTitle,
@@ -290,7 +290,7 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                         const durMatch = text.match(/\((\d+:\d+)\)|\s(\d+:\d+)\s*$/);
                         const title = text.replace(/\(?\d+:\d+\)?/g, '').trim();
                         const cleanTitle = title || text;
-                        if (cleanTitle === 'Start' || sectionTitles.has(cleanTitle) || promoTitles.has(cleanTitle)) return;
+                        if (cleanTitle === 'Start' || promoTitles.has(cleanTitle)) return;
                         const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
                         fallbackLectures.push({
                             title: cleanTitle,
