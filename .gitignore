@@ -3,6 +3,7 @@ node_modules/
 
 # Environment
 .env
+data/ai-settings.json
 
 # Database & data files
 data/transcripts.db

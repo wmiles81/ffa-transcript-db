@@ -1,0 +1,36 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - link "Future Fiction Academy" [ref=e5] [cursor=pointer]:
+      - /url: https://future-fiction-academy.teachable.com
+      - img "Future Fiction Academy" [ref=e6]
+  - main [ref=e7]:
+    - generic [ref=e8]:
+      - heading "Log In" [level=3] [ref=e9]
+      - generic [ref=e12]:
+        - generic [ref=e13]: Email
+        - textbox "Email" [ref=e16]:
+          - /placeholder: you@email.com
+        - generic [ref=e17]:
+          - checkbox "Remember me" [checked] [ref=e18]
+          - text: Remember me
+        - button "Log In" [ref=e19] [cursor=pointer]:
+          - generic [ref=e20]: Log In
+        - generic [ref=e21]:
+          - img [ref=e23]
+          - generic [ref=e27]:
+            - text: We will email you a code for a password-free log in. Or you can
+            - link "log in with a password" [ref=e28] [cursor=pointer]:
+              - /url: /secure/1654415/identity/login/password?force=true
+            - text: instead.
+  - contentinfo [ref=e29]:
+    - generic:
+      - generic: © Future Fiction Academy 2026
+  - iframe [ref=e32]:
+    - generic [ref=f3e5]:
+      - generic [ref=f3e6]:
+        - text: protected by
+        - strong [ref=f3e7]: reCAPTCHA
+      - generic [ref=f3e9]:
+        - text: reCAPTCHA is changing its terms of service.
+        - link "Take action." [ref=f3e10] [cursor=pointer]:
+          - /url: https://google.com/recaptcha/admin/migrate
