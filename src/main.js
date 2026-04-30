@@ -316,6 +316,7 @@ async function loadTranscriptDetail(id, highlightQuery) {
                 lecture_date: lecture.scraped_at?.split('T')[0],
                 content: lecture.content || '(No text content)',
                 result_type: 'course',
+                course_id: lecture.course_id,
             }, highlightQuery);
             switchView('detail');
             return;
@@ -805,6 +806,17 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         }
     }
 
+    // Linkify URLs (after all other replacements, so we don't double-process)
+    content = content.replace(
+        /(https?:\/\/[^\s<>"]+)/g,
+        '<a href="$1" target="_blank" rel="noopener noreferrer" class="content-link">$1</a>'
+    );
+
+    // Detect the first Notion URL in the raw content for the "Set Notion URL" button
+    const notionMatch = transcript.content?.match(/https?:\/\/[^\s]*notion\.site\/[^\s]*/);
+    const notionUrlInContent = notionMatch ? notionMatch[0] : null;
+    const showNotionBtn = transcript.result_type === 'course' && transcript.course_id && notionUrlInContent;
+
     const badgeClass = getBadgeClass(transcript.transcript_type);
     const durationStr = transcript.duration_minutes
         ? `${Math.round(transcript.duration_minutes)} min`
@@ -818,11 +830,31 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         <span class="card-badge ${badgeClass}">${escapeHtml(transcript.transcript_type || '')}</span>
         ${transcript.lecture_date ? `<span class="card-date">${transcript.lecture_date}</span>` : ''}
         ${durationStr ? `<span class="card-duration">${durationStr}</span>` : ''}
-        <span class="card-date">${escapeHtml(transcript.source_name)}</span>
+        ${transcript.source_name ? `<span class="card-date">${escapeHtml(transcript.source_name)}</span>` : ''}
+        ${showNotionBtn ? `<button class="set-notion-btn" data-course-id="${transcript.course_id}" data-url="${escapeHtml(notionUrlInContent)}">Set as course Notion URL</button>` : ''}
       </div>
     </div>
     <div class="detail-content">${content}</div>
   `;
+
+    // Wire the Notion URL button
+    const notionBtn = el.transcriptDetail.querySelector('.set-notion-btn');
+    if (notionBtn) {
+        notionBtn.addEventListener('click', async () => {
+            const courseId = notionBtn.dataset.courseId;
+            const url = notionBtn.dataset.url;
+            try {
+                await api(`/api/courses/${courseId}`, { method: 'PATCH', body: JSON.stringify({ notion_url: url }) });
+                state.courses = await api('/api/courses');
+                renderCourseList();
+                if (state.activeSource === `course-${courseId}`) loadTranscripts();
+                notionBtn.textContent = 'Notion URL saved ✓';
+                notionBtn.disabled = true;
+            } catch (err) {
+                alert('Failed to save: ' + err.message);
+            }
+        });
+    }
 }
 
 // --- View Management ---

@@ -872,6 +872,26 @@ body {
   font-weight: 600;
 }
 
+.detail-content .content-link {
+  color: var(--accent);
+  text-decoration: underline;
+  word-break: break-all;
+}
+.detail-content .content-link:hover { opacity: 0.8; }
+
+.set-notion-btn {
+  font-size: 0.72rem;
+  padding: 3px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.set-notion-btn:hover { background: var(--accent); color: var(--bg-primary); }
+.set-notion-btn:disabled { opacity: 0.5; cursor: default; }
+
 /* --- Utility --- */
 .hidden {
   display: none !important;
