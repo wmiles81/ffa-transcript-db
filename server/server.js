@@ -261,7 +261,7 @@ app.get('/api/search', (req, res) => {
               SELECT cc.id as chunk_id, cc.position as chunk_index,
                      highlight(course_chunks_fts, 0, '<mark>', '</mark>') as snippet,
                      rank,
-                     cl.id as lecture_id, cl.title as lecture_title, cl.duration,
+                     cl.id as lecture_id, cl.title as lecture_title, cl.class_number, cl.duration,
                      cs.title as section_title,
                      co.id as course_id, co.title as course_title,
                      'course' as result_type
@@ -292,7 +292,7 @@ app.get('/api/search', (req, res) => {
                   SELECT cc.id as chunk_id, cc.position as chunk_index,
                          highlight(course_chunks_fts, 0, '<mark>', '</mark>') as snippet,
                          rank,
-                         cl.id as lecture_id, cl.title as lecture_title, cl.duration,
+                         cl.id as lecture_id, cl.title as lecture_title, cl.class_number, cl.duration,
                          cs.title as section_title,
                          co.id as course_id, co.title as course_title,
                          'course' as result_type

@@ -222,6 +222,7 @@ async function loadTranscripts() {
                 filename: lec.section_title || '',
                 transcript_type: 'Course',
                 lecture: lec.title,
+                class_number: lec.class_number || null,
                 lecture_date: lec.scraped_at?.split('T')[0],
                 duration_minutes: null,
                 result_type: 'course',
@@ -679,7 +680,10 @@ function renderTranscriptGrid(transcripts) {
             : '';
 
         card.innerHTML = `
-      <div class="card-lecture">${escapeHtml(t.lecture)}</div>
+      <div class="card-lecture">
+        ${t.class_number ? `<span class="class-number-badge">${escapeHtml(t.class_number)}</span>` : ''}
+        ${escapeHtml(t.lecture)}
+      </div>
       <div class="card-filename">${escapeHtml(t.filename)}</div>
       <div class="card-meta">
         <span class="card-badge ${badgeClass}">${escapeHtml(t.transcript_type || 'Unknown')}</span>
@@ -716,7 +720,10 @@ function renderSearchResults(results) {
             card.innerHTML = `
               <div class="result-header">
                 <div>
-                  <div class="result-lecture">${escapeHtml(r.lecture_title || '')}</div>
+                  <div class="result-lecture">
+                    ${r.class_number ? `<span class="class-number-badge">${escapeHtml(r.class_number)}</span>` : ''}
+                    ${escapeHtml(r.lecture_title || '')}
+                  </div>
                   <div class="result-filename">${escapeHtml(r.course_title || '')} › ${escapeHtml(r.section_title || '')}</div>
                 </div>
                 <span class="card-badge badge-course">Course</span>

@@ -244,10 +244,13 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                             const text = link.textContent?.trim() || '';
                             const durMatch = text.match(/\((\d+:\d+)\)|\s(\d+:\d+)\s*$/);
                             const title = text.replace(/\(?\d+:\d+\)?/g, '').trim();
-                            lectures.push({
-                                title: title || text,
+                            const cleanTitle = title || text;
+                                const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
+                                lectures.push({
+                                title: cleanTitle,
                                 url: href,
                                 duration: durMatch ? (durMatch[1] || durMatch[2]) : null,
+                                classNumber: classNumMatch ? classNumMatch[1] : null,
                             });
                         }
                     });
@@ -268,10 +271,13 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                     if (href && text && !fallbackLectures.some(l => l.url === href)) {
                         const durMatch = text.match(/\((\d+:\d+)\)|\s(\d+:\d+)\s*$/);
                         const title = text.replace(/\(?\d+:\d+\)?/g, '').trim();
+                        const cleanTitle = title || text;
+                        const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
                         fallbackLectures.push({
-                            title: title || text,
+                            title: cleanTitle,
                             url: href,
                             duration: durMatch ? (durMatch[1] || durMatch[2]) : null,
+                            classNumber: classNumMatch ? classNumMatch[1] : null,
                         });
                     }
                 });
@@ -320,8 +326,8 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                 onProgress(`Scraping: ${lecture.title}`, pct);
 
                 const lecResult = db.prepare(
-                    'INSERT INTO course_lectures (course_id, section_id, title, url, duration, position, scraped_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-                ).run(courseId, sectionId, lecture.title, lecture.url, lecture.duration, li, new Date().toISOString());
+                    'INSERT INTO course_lectures (course_id, section_id, title, url, duration, position, scraped_at, class_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                ).run(courseId, sectionId, lecture.title, lecture.url, lecture.duration, li, new Date().toISOString(), lecture.classNumber ?? null);
                 const lectureId = lecResult.lastInsertRowid;
 
                 try {

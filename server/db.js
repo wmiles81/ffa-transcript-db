@@ -147,10 +147,22 @@ export function initializeDb() {
     CREATE INDEX IF NOT EXISTS idx_course_chunks_lecture ON course_chunks(lecture_id);
   `);
 
-  // Migration: add class_number column if it doesn't exist yet
-  const cols = db.prepare("PRAGMA table_info(courses)").all();
-  if (!cols.some(c => c.name === 'class_number')) {
+  // Migration: add class_number to courses if missing
+  const courseCols = db.prepare("PRAGMA table_info(courses)").all();
+  if (!courseCols.some(c => c.name === 'class_number')) {
     db.exec("ALTER TABLE courses ADD COLUMN class_number TEXT");
+  }
+
+  // Migration: add class_number to course_lectures if missing, then backfill from titles
+  const lectureCols = db.prepare("PRAGMA table_info(course_lectures)").all();
+  if (!lectureCols.some(c => c.name === 'class_number')) {
+    db.exec("ALTER TABLE course_lectures ADD COLUMN class_number TEXT");
+    const lectures = db.prepare('SELECT id, title FROM course_lectures').all();
+    const update = db.prepare('UPDATE course_lectures SET class_number = ? WHERE id = ?');
+    for (const { id, title } of lectures) {
+      const m = title.match(/^(\d{2,4})[\s\-–]/);
+      if (m) update.run(m[1], id);
+    }
   }
 
   return db;
