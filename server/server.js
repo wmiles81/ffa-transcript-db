@@ -750,25 +750,26 @@ app.get('/api/courses/:id/sections', (req, res) => {
     res.json(sections);
 });
 
-// GET /api/courses/:id/lectures — List lectures for a course, optionally filtered by section
+// GET /api/courses/:id/lectures — List lectures, excluding Teachable nav artifacts
 app.get('/api/courses/:id/lectures', (req, res) => {
     const db = getDb();
     const sectionId = req.query.section_id ? parseInt(req.query.section_id) : null;
-    const lectures = sectionId
-        ? db.prepare(`
-            SELECT cl.*, cs.title as section_title
-            FROM course_lectures cl
-            LEFT JOIN course_sections cs ON cl.section_id = cs.id
-            WHERE cl.course_id = ? AND cl.section_id = ?
-            ORDER BY cl.position
-          `).all(req.params.id, sectionId)
-        : db.prepare(`
-            SELECT cl.*, cs.title as section_title
-            FROM course_lectures cl
-            LEFT JOIN course_sections cs ON cl.section_id = cs.id
-            WHERE cl.course_id = ?
-            ORDER BY cs.position, cl.position
-          `).all(req.params.id);
+    const whereClause = sectionId
+        ? 'WHERE cl.course_id = ? AND cl.section_id = ?'
+        : 'WHERE cl.course_id = ?';
+    const params = sectionId ? [req.params.id, sectionId] : [req.params.id];
+
+    const lectures = db.prepare(`
+        SELECT cl.*, cs.title as section_title
+        FROM course_lectures cl
+        LEFT JOIN course_sections cs ON cl.section_id = cs.id
+        ${whereClause}
+          AND cl.title != 'Start'
+          AND cl.title NOT IN (
+            SELECT title FROM course_sections WHERE course_id = cl.course_id
+          )
+        ORDER BY cs.position, cl.position
+    `).all(...params);
     res.json(lectures);
 });
 
