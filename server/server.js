@@ -765,6 +765,7 @@ app.get('/api/courses/:id/lectures', (req, res) => {
         LEFT JOIN course_sections cs ON cl.section_id = cs.id
         ${whereClause}
           AND cl.title != 'Start'
+          AND cl.title NOT LIKE '%Check Out the FFA Free Community Classes%'
           AND cl.title NOT IN (
             SELECT title FROM course_sections WHERE course_id = cl.course_id
           )

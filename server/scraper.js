@@ -8,6 +8,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const COOKIES_PATH = path.join(__dirname, '..', 'data', 'cookies.json');
 const SCHOOL_URL = process.env.TEACHABLE_SCHOOL_URL || 'https://future-fiction-academy.teachable.com';
 
+// Teachable promotional lectures injected into every course — skip during scrape
+const PROMO_TITLES = new Set([
+    'Check Out the FFA Free Community Classes, Discord, and Facebook Group',
+    '🗨️ Check Out the FFA Free Community Classes, Discord, and Facebook Group',
+]);
+
 // =============================================================================
 // Cookie / Session Management
 // =============================================================================
@@ -221,7 +227,8 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
         onProgress(`Found course: ${classNumber ? `#${classNumber} ` : ''}${courseTitle}`, 10);
 
         // Extract curriculum from sidebar
-        const curriculum = await page.evaluate(() => {
+        const curriculum = await page.evaluate((promoTitlesList) => {
+            const promoTitles = new Set(promoTitlesList);
             const sections = [];
             const sectionElements = document.querySelectorAll(
                 '.course-section, [class*="section"], .row.lecture-sidebar'
@@ -254,8 +261,8 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                             const durMatch = text.match(/\((\d+:\d+)\)|\s(\d+:\d+)\s*$/);
                             const title = text.replace(/\(?\d+:\d+\)?/g, '').trim();
                             const cleanTitle = title || text;
-                            // Skip Teachable nav artifacts: "Start" CTAs and section-header links
-                            if (cleanTitle === 'Start' || sectionTitles.has(cleanTitle)) return;
+                            // Skip Teachable nav artifacts: "Start" CTAs, section-header links, and promos
+                            if (cleanTitle === 'Start' || sectionTitles.has(cleanTitle) || promoTitles.has(cleanTitle)) return;
                             const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
                             lectures.push({
                                 title: cleanTitle,
@@ -283,7 +290,7 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                         const durMatch = text.match(/\((\d+:\d+)\)|\s(\d+:\d+)\s*$/);
                         const title = text.replace(/\(?\d+:\d+\)?/g, '').trim();
                         const cleanTitle = title || text;
-                        if (cleanTitle === 'Start' || sectionTitles.has(cleanTitle)) return;
+                        if (cleanTitle === 'Start' || sectionTitles.has(cleanTitle) || promoTitles.has(cleanTitle)) return;
                         const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
                         fallbackLectures.push({
                             title: cleanTitle,
@@ -299,7 +306,7 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
             }
 
             return sections;
-        });
+        }, [...PROMO_TITLES]);
 
         const totalLectures = curriculum.reduce((sum, s) => sum + s.lectures.length, 0);
         onProgress(`Found ${totalLectures} lectures in ${curriculum.length} section(s)`, 15);
