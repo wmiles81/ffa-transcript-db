@@ -263,6 +263,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
+  -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
 }
 
@@ -585,28 +586,36 @@ body {
   color: var(--text-primary);
 }
 
+.notion-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.35rem 0.6rem;
+  background: var(--glass-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
 .notion-link {
-  font-size: 0.75rem;
   color: var(--accent);
   text-decoration: none;
-  white-space: nowrap;
-  opacity: 0.85;
+  flex: 1;
 }
-.notion-link:hover { opacity: 1; text-decoration: underline; }
+.notion-link:hover { text-decoration: underline; }
 
-.notion-edit-btn {
-  margin-left: auto;
-  font-size: 0.65rem;
-  padding: 1px 5px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
+.notion-bar-edit {
   background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
   color: var(--text-muted);
+  font-size: 0.72rem;
+  padding: 2px 8px;
   cursor: pointer;
   white-space: nowrap;
-  flex-shrink: 0;
 }
-.notion-edit-btn:hover { color: var(--accent); border-color: var(--accent); }
+.notion-bar-edit:hover { color: var(--accent); border-color: var(--accent); }
 
 /* --- Transcript Grid (Browse View) --- */
 .transcript-grid {
@@ -617,6 +626,7 @@ body {
 
 .transcript-card {
   background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
@@ -725,6 +735,7 @@ body {
 
 .result-card {
   background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
@@ -816,6 +827,7 @@ body {
 
 .transcript-detail {
   background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
@@ -1027,6 +1039,7 @@ body {
 /* --- AI Answer Card --- */
 .ai-answer-card {
   background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border-accent);
   border-radius: var(--radius-lg);
@@ -1124,6 +1137,7 @@ body {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.6);
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   z-index: 1000;
   display: flex;

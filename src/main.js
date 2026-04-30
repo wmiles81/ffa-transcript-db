@@ -26,8 +26,14 @@ const state = {
 };
 
 // --- API Helpers ---
-async function api(endpoint) {
-    const res = await fetch(endpoint);
+async function api(endpoint, options = {}) {
+    const { method = 'GET', body, headers = {} } = options;
+    const fetchOptions = { method, headers };
+    if (body) {
+        fetchOptions.body = body;
+        fetchOptions.headers['Content-Type'] = 'application/json';
+    }
+    const res = await fetch(endpoint, fetchOptions);
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     return res.json();
 }
@@ -99,7 +105,9 @@ const el = {
     scrapeMessage: document.getElementById('scrape-message'),
     scrapePct: document.getElementById('scrape-pct'),
     scrapeBar: document.getElementById('scrape-bar'),
+    notionBar: document.getElementById('notion-bar'),
     notionLink: document.getElementById('notion-link'),
+    notionEditBtn: document.getElementById('notion-edit-btn'),
 };
 
 // --- Theme toggle ---
@@ -233,16 +241,7 @@ async function loadTranscripts() {
                 result_type: 'course',
             })));
             el.browseTitle.textContent = 'Course Lectures';
-            // Show Notion link if this course has one
-            const activeCourse = (state.courses || []).find(c => String(c.id) === String(courseId));
-            if (el.notionLink) {
-                if (activeCourse?.notion_url) {
-                    el.notionLink.href = activeCourse.notion_url;
-                    el.notionLink.classList.remove('hidden');
-                } else {
-                    el.notionLink.classList.add('hidden');
-                }
-            }
+            updateNotionBar(courseId);
             return;
         }
         const params = new URLSearchParams();
@@ -252,7 +251,7 @@ async function loadTranscripts() {
         const data = await api(`/api/transcripts?${params}`);
         renderTranscriptGrid(data.transcripts);
         el.browseTitle.textContent = state.activeLecture || 'All Transcripts';
-        if (el.notionLink) el.notionLink.classList.add('hidden');
+        if (el.notionBar) el.notionBar.classList.add('hidden');
     } catch (e) {
         console.error('Failed to load transcripts:', e);
     }
@@ -636,6 +635,42 @@ function setupSettingsListeners() {
             el.modelList.classList.add('hidden');
         }
     });
+}
+
+// --- Notion Bar ---
+function updateNotionBar(courseId) {
+    if (!el.notionBar) return;
+    const course = (state.courses || []).find(c => String(c.id) === String(courseId));
+    if (!course) { el.notionBar.classList.add('hidden'); return; }
+
+    const hasPrefix = /[A-Z]{3}:/.test(course.title);
+    if (!hasPrefix && !course.notion_url) { el.notionBar.classList.add('hidden'); return; }
+
+    el.notionBar.classList.remove('hidden');
+    if (course.notion_url) {
+        el.notionLink.href = course.notion_url;
+        el.notionLink.textContent = 'View Notes in Notion →';
+        el.notionLink.classList.remove('hidden');
+        el.notionEditBtn.textContent = 'Edit URL';
+    } else {
+        el.notionLink.classList.add('hidden');
+        el.notionEditBtn.textContent = 'Add Notion URL';
+    }
+
+    el.notionEditBtn.onclick = async () => {
+        const current = course.notion_url || '';
+        const input = window.prompt('Paste the Notion URL for this course:', current);
+        if (input === null) return;
+        const url = input.trim();
+        try {
+            await api(`/api/courses/${courseId}`, { method: 'PATCH', body: JSON.stringify({ notion_url: url || null }) });
+            state.courses = await api('/api/courses');
+            renderCourseList();
+            updateNotionBar(courseId);
+        } catch (err) {
+            alert('Failed to save Notion URL: ' + err.message);
+        }
+    };
 }
 
 // --- Render Functions ---
@@ -1039,15 +1074,12 @@ function renderCourseList() {
     // Add scraped courses
     for (const c of (state.courses || [])) {
         const prefix = c.class_number ? `${c.class_number} – ` : '';
-        const hasPrefixPattern = /[A-Z]{3}:/.test(c.title);
         allItems.push({
             type: 'course',
             id: `crs-${c.id}`,
             title: `${prefix}${c.title}`,
             meta: `${c.lecture_count || 0}L · ${c.chunk_count || 0}C`,
             courseId: c.id,
-            notionUrl: c.notion_url || null,
-            editable: hasPrefixPattern,
         });
     }
 
@@ -1063,11 +1095,10 @@ function renderCourseList() {
     }
 
     el.courseList.innerHTML = allItems.map(item => `
-        <label class="course-checklist-item" data-type="${item.type}" data-id="${item.id}" data-course-id="${item.courseId || ''}">
+        <label class="course-checklist-item" data-type="${item.type}" data-id="${item.id}">
             <input type="checkbox" class="course-check" value="${item.id}" />
             <span class="course-checklist-title">${escapeHtml(item.title)}</span>
             <span class="course-checklist-meta">${item.meta}</span>
-            ${item.editable ? `<button class="notion-edit-btn" title="${item.notionUrl ? 'Edit Notion URL' : 'Add Notion URL'}" data-course-id="${item.courseId}" data-notion-url="${escapeHtml(item.notionUrl || '')}">notion${item.notionUrl ? ' ✓' : ' +'}</button>` : ''}
         </label>
     `).join('');
 
@@ -1109,27 +1140,6 @@ function renderCourseList() {
         });
     });
 
-    // Notion URL edit buttons
-    el.courseList.querySelectorAll('.notion-edit-btn').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const courseId = btn.dataset.courseId;
-            const current = btn.dataset.notionUrl || '';
-            const input = window.prompt('Notion URL for this course:', current);
-            if (input === null) return; // cancelled
-            const url = input.trim();
-            try {
-                await api(`/api/courses/${courseId}`, { method: 'PATCH', body: JSON.stringify({ notion_url: url || null }) });
-                state.courses = await api('/api/courses');
-                renderCourseList();
-                // Refresh the Notion link if this course is currently active
-                if (state.activeSource === `course-${courseId}`) loadTranscripts();
-            } catch (err) {
-                alert('Failed to save Notion URL: ' + err.message);
-            }
-        });
-    });
 }
 
 // Delete selected sources/courses handler
