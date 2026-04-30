@@ -447,18 +447,16 @@ async function doAiAsk(question) {
 /** Simple markdown-like rendering for AI responses */
 function renderMarkdown(text) {
     let html = escapeHtml(text);
-    // Bold
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    // Italic
     html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    // Inline code
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-    // Bullet lists
-    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
-    html = html.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>');
-    // Numbered lists
-    html = html.replace(/^\d+\.\s(.+)$/gm, '<li>$1</li>');
-    // Paragraphs
+    // Use placeholder tags to keep bullet vs numbered items distinct until wrapping
+    html = html.replace(/^- (.+)$/gm, '<bli>$1</bli>');
+    html = html.replace(/^\d+\.\s(.+)$/gm, '<oli>$1</oli>');
+    html = html.replace(/(<bli>.+?<\/bli>\n?)+/g, match =>
+        '<ul>' + match.replace(/<bli>(.+?)<\/bli>\n?/g, '<li>$1</li>') + '</ul>');
+    html = html.replace(/(<oli>.+?<\/oli>\n?)+/g, match =>
+        '<ol>' + match.replace(/<oli>(.+?)<\/oli>\n?/g, '<li>$1</li>') + '</ol>');
     html = html.replace(/\n\n/g, '</p><p>');
     html = html.replace(/\n/g, '<br>');
     return `<p>${html}</p>`;
