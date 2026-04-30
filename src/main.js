@@ -11,6 +11,8 @@ const state = {
     activeLecture: '',
     searchQuery: '',
     searchTimeout: null,
+    // Active course section filter
+    activeSection: null,
     // AI search
     aiMode: false,
     aiModels: [],
@@ -186,15 +188,16 @@ async function loadSources() {
 
 async function loadLectures() {
     try {
-        // If a course is selected, show course lectures instead
+        // If a course is selected, show its sections in the sidebar
         if (state.activeSource && state.activeSource.startsWith('course-')) {
             const courseId = state.activeSource.replace('course-', '');
             try {
-                const lectures = await api(`/api/courses/${courseId}/lectures`);
-                renderLectureList(lectures.map(lec => ({
-                    lecture: lec.title,
-                    lecture_date: lec.section_title || '',
-                    transcript_count: lec.chunk_count || 0,
+                const sections = await api(`/api/courses/${courseId}/sections`);
+                renderLectureList(sections.map(s => ({
+                    lecture: s.title,
+                    lecture_date: '',
+                    transcript_count: s.lecture_count,
+                    sectionId: s.id,
                 })));
             } catch {
                 renderLectureList([]);
@@ -215,7 +218,8 @@ async function loadTranscripts() {
         // If a course is selected, show course content instead
         if (state.activeSource && state.activeSource.startsWith('course-')) {
             const courseId = state.activeSource.replace('course-', '');
-            const data = await api(`/api/courses/${courseId}/lectures`);
+            const params = state.activeSection ? `?section_id=${state.activeSection}` : '';
+            const data = await api(`/api/courses/${courseId}/lectures${params}`);
             renderTranscriptGrid(data.map(lec => ({
                 id: `clec-${lec.id}`,
                 title: lec.title,
@@ -624,12 +628,14 @@ function setupSettingsListeners() {
 // --- Render Functions ---
 function renderLectureList(lectures) {
     el.lectureList.innerHTML = '';
+    const isCourse = state.activeSource?.startsWith('course-');
 
     const allItem = document.createElement('div');
-    allItem.className = `lecture-item ${!state.activeLecture ? 'active' : ''}`;
-    allItem.innerHTML = `<span class="lecture-name">All Lectures</span>`;
+    allItem.className = `lecture-item ${(!state.activeLecture && !state.activeSection) ? 'active' : ''}`;
+    allItem.innerHTML = `<span class="lecture-name">${isCourse ? 'All Sections' : 'All Lectures'}</span>`;
     allItem.onclick = () => {
         state.activeLecture = '';
+        state.activeSection = null;
         loadLectures();
         loadTranscripts();
         if (state.searchQuery) doSearch(state.searchQuery);
@@ -638,7 +644,10 @@ function renderLectureList(lectures) {
 
     for (const lecture of lectures) {
         const item = document.createElement('div');
-        item.className = `lecture-item ${state.activeLecture === lecture.lecture ? 'active' : ''}`;
+        const isActive = isCourse
+            ? state.activeSection === lecture.sectionId
+            : state.activeLecture === lecture.lecture;
+        item.className = `lecture-item ${isActive ? 'active' : ''}`;
         const datePart = lecture.lecture_date || '';
         const nameParts = lecture.lecture.replace(/\(\d+:\d+\)/, '').trim();
         item.innerHTML = `
@@ -646,7 +655,11 @@ function renderLectureList(lectures) {
       <span class="lecture-name">${escapeHtml(nameParts)}</span>
     `;
         item.onclick = () => {
-            state.activeLecture = lecture.lecture;
+            if (isCourse) {
+                state.activeSection = lecture.sectionId;
+            } else {
+                state.activeLecture = lecture.lecture;
+            }
             loadLectures();
             loadTranscripts();
             if (state.searchQuery) doSearch(state.searchQuery);
@@ -865,6 +878,8 @@ function setupEventListeners() {
     // Source filter
     el.filterSource.addEventListener('change', (e) => {
         state.activeSource = e.target.value;
+        state.activeSection = null;
+        state.activeLecture = '';
         loadLectures();
         loadTranscripts();
         if (state.searchQuery) doSearch(state.searchQuery);
@@ -1029,6 +1044,8 @@ function renderCourseList() {
             if (type === 'course') {
                 const courseId = Number(id.replace('crs-', ''));
                 state.activeSource = `course-${courseId}`;
+                state.activeSection = null;
+                state.activeLecture = '';
                 el.filterSource.value = `course-${courseId}`;
                 loadLectures();
                 loadTranscripts();

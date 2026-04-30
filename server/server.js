@@ -735,16 +735,40 @@ app.get('/api/courses/lectures/:id', (req, res) => {
     res.json({ ...lecture, chunks, content: chunks.map(c => c.content).join('\n\n---\n\n') });
 });
 
-// GET /api/courses/:id/lectures — List lectures for a course
+// GET /api/courses/:id/sections — List sections for a course with lecture counts
+app.get('/api/courses/:id/sections', (req, res) => {
+    const db = getDb();
+    const sections = db.prepare(`
+        SELECT cs.id, cs.title, cs.position,
+               COUNT(cl.id) as lecture_count
+        FROM course_sections cs
+        LEFT JOIN course_lectures cl ON cl.section_id = cs.id
+        WHERE cs.course_id = ?
+        GROUP BY cs.id
+        ORDER BY cs.position
+    `).all(req.params.id);
+    res.json(sections);
+});
+
+// GET /api/courses/:id/lectures — List lectures for a course, optionally filtered by section
 app.get('/api/courses/:id/lectures', (req, res) => {
     const db = getDb();
-    const lectures = db.prepare(`
-        SELECT cl.*, cs.title as section_title
-        FROM course_lectures cl
-        LEFT JOIN course_sections cs ON cl.section_id = cs.id
-        WHERE cl.course_id = ?
-        ORDER BY cs.position, cl.position
-    `).all(req.params.id);
+    const sectionId = req.query.section_id ? parseInt(req.query.section_id) : null;
+    const lectures = sectionId
+        ? db.prepare(`
+            SELECT cl.*, cs.title as section_title
+            FROM course_lectures cl
+            LEFT JOIN course_sections cs ON cl.section_id = cs.id
+            WHERE cl.course_id = ? AND cl.section_id = ?
+            ORDER BY cl.position
+          `).all(req.params.id, sectionId)
+        : db.prepare(`
+            SELECT cl.*, cs.title as section_title
+            FROM course_lectures cl
+            LEFT JOIN course_sections cs ON cl.section_id = cs.id
+            WHERE cl.course_id = ?
+            ORDER BY cs.position, cl.position
+          `).all(req.params.id);
     res.json(lectures);
 });
 
