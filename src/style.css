@@ -574,6 +574,9 @@ body {
 /* --- Section Headers --- */
 .section-header {
   margin-bottom: 1rem;
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
 }
 
 .section-header h2 {
@@ -581,6 +584,29 @@ body {
   font-weight: 600;
   color: var(--text-primary);
 }
+
+.notion-link {
+  font-size: 0.75rem;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+.notion-link:hover { opacity: 1; text-decoration: underline; }
+
+.notion-edit-btn {
+  margin-left: auto;
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.notion-edit-btn:hover { color: var(--accent); border-color: var(--accent); }
 
 /* --- Transcript Grid (Browse View) --- */
 .transcript-grid {

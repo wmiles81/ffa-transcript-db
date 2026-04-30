@@ -774,6 +774,19 @@ app.get('/api/courses/:id/lectures', (req, res) => {
     res.json(lectures);
 });
 
+// PATCH /api/courses/:id — Update editable fields (notion_url)
+app.patch('/api/courses/:id', (req, res) => {
+    const db = getDb();
+    const course = db.prepare('SELECT * FROM courses WHERE id = ?').get(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+    const { notion_url } = req.body;
+    if (notion_url !== undefined) {
+        const url = notion_url ? String(notion_url).trim() : null;
+        db.prepare('UPDATE courses SET notion_url = ? WHERE id = ?').run(url, req.params.id);
+    }
+    res.json({ success: true });
+});
+
 app.delete('/api/courses/:id', (req, res) => {
     const db = getDb();
     const course = db.prepare('SELECT * FROM courses WHERE id = ?').get(req.params.id);

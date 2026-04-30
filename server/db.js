@@ -147,10 +147,13 @@ export function initializeDb() {
     CREATE INDEX IF NOT EXISTS idx_course_chunks_lecture ON course_chunks(lecture_id);
   `);
 
-  // Migration: add class_number to courses if missing
+  // Migration: add class_number and notion_url to courses if missing
   const courseCols = db.prepare("PRAGMA table_info(courses)").all();
   if (!courseCols.some(c => c.name === 'class_number')) {
     db.exec("ALTER TABLE courses ADD COLUMN class_number TEXT");
+  }
+  if (!courseCols.some(c => c.name === 'notion_url')) {
+    db.exec("ALTER TABLE courses ADD COLUMN notion_url TEXT");
   }
 
   // Migration: add class_number to course_lectures if missing, then backfill from titles
