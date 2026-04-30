@@ -227,6 +227,15 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                 '.course-section, [class*="section"], .row.lecture-sidebar'
             );
 
+            // Collect all section titles so we can skip lecture links that duplicate them
+            const sectionTitles = new Set();
+            sectionElements.forEach(sectionEl => {
+                const t = sectionEl.querySelector(
+                    '.section-title, [class*="section-title"], h3, h4'
+                )?.textContent?.trim();
+                if (t) sectionTitles.add(t);
+            });
+
             if (sectionElements.length > 0) {
                 sectionElements.forEach(sectionEl => {
                     const sectionTitle = sectionEl.querySelector(
@@ -245,8 +254,10 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                             const durMatch = text.match(/\((\d+:\d+)\)|\s(\d+:\d+)\s*$/);
                             const title = text.replace(/\(?\d+:\d+\)?/g, '').trim();
                             const cleanTitle = title || text;
-                                const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
-                                lectures.push({
+                            // Skip Teachable nav artifacts: "Start" CTAs and section-header links
+                            if (cleanTitle === 'Start' || sectionTitles.has(cleanTitle)) return;
+                            const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
+                            lectures.push({
                                 title: cleanTitle,
                                 url: href,
                                 duration: durMatch ? (durMatch[1] || durMatch[2]) : null,
@@ -272,6 +283,7 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                         const durMatch = text.match(/\((\d+:\d+)\)|\s(\d+:\d+)\s*$/);
                         const title = text.replace(/\(?\d+:\d+\)?/g, '').trim();
                         const cleanTitle = title || text;
+                        if (cleanTitle === 'Start' || sectionTitles.has(cleanTitle)) return;
                         const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
                         fallbackLectures.push({
                             title: cleanTitle,
