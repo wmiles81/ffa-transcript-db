@@ -744,6 +744,7 @@ app.get('/api/courses/:id/sections', (req, res) => {
         FROM course_sections cs
         LEFT JOIN course_lectures cl ON cl.section_id = cs.id
         WHERE cs.course_id = ?
+          AND cs.title NOT LIKE '%Check Out the FFA Free Community Classes%'
         GROUP BY cs.id
         ORDER BY cs.position
     `).all(req.params.id);

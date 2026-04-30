@@ -334,6 +334,8 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
         let scraped = 0;
         for (let si = 0; si < curriculum.length; si++) {
             const section = curriculum[si];
+            // Skip the promo section entirely
+            if (section.title && PROMO_TITLES.has(section.title)) continue;
             const secResult = db.prepare(
                 'INSERT INTO course_sections (course_id, title, position) VALUES (?, ?, ?)'
             ).run(courseId, section.title, si);
