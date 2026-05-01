@@ -9,7 +9,9 @@ data/ai-settings.json
 data/transcripts.db
 data/transcripts.db-wal
 data/transcripts.db-shm
+data/transcripts.db.bak
 data/cookies.json
+data/.dbkey
 
 # Build output
 dist/

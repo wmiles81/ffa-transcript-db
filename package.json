@@ -13,7 +13,7 @@
         "dev:client": "npx vite"
     },
     "dependencies": {
-        "better-sqlite3": "^11.0.0",
+        "better-sqlite3-multiple-ciphers": "^12.9.0",
         "cors": "^2.8.5",
         "express": "^4.21.0",
         "puppeteer": "^24.0.0"
