@@ -1365,6 +1365,7 @@ function setupCourseListeners() {
     // Login
     if (el.loginBtn) {
         el.loginBtn.addEventListener('click', async () => {
+            if (state.loggedIn && !confirm('You are already logged in to Teachable. Log in again?')) return;
             el.loginBtn.textContent = '⏳ Opening browser...';
             el.loginBtn.disabled = true;
             try {
