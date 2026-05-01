@@ -592,18 +592,19 @@ body {
   gap: 0.75rem;
   margin-bottom: 0.75rem;
   padding: 0.35rem 0.6rem;
-  background: var(--glass-bg);
-  border: 1px solid var(--border);
+  background: rgba(99, 179, 237, 0.08);
+  border: 1px solid rgba(99, 179, 237, 0.35);
   border-radius: 6px;
   font-size: 0.8rem;
 }
 
 .notion-link {
-  color: var(--accent);
+  color: #63b3ed;
   text-decoration: none;
+  font-weight: 600;
   flex: 1;
 }
-.notion-link:hover { text-decoration: underline; }
+.notion-link:hover { color: #90cdf4; text-decoration: underline; }
 
 .notion-bar-edit {
   background: transparent;
