@@ -684,7 +684,12 @@ function renderLectureList(lectures) {
     allItem.onclick = () => {
         state.activeLecture = '';
         state.activeSection = null;
-        loadLectures();
+        if (isCourse) {
+            el.lectureList.querySelectorAll('.lecture-item').forEach(i => i.classList.remove('active'));
+            allItem.classList.add('active');
+        } else {
+            loadLectures();
+        }
         loadTranscripts();
         if (state.searchQuery) doSearch(state.searchQuery);
     };
@@ -705,10 +710,13 @@ function renderLectureList(lectures) {
         item.onclick = () => {
             if (isCourse) {
                 state.activeSection = lecture.sectionId;
+                // Update active highlight directly — no need to re-fetch sections
+                el.lectureList.querySelectorAll('.lecture-item').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
             } else {
                 state.activeLecture = lecture.lecture;
+                loadLectures();
             }
-            loadLectures();
             loadTranscripts();
             if (state.searchQuery) doSearch(state.searchQuery);
         };
