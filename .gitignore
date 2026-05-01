@@ -17,6 +17,9 @@ dist/
 # Backups
 backup/
 
+# Local distribution builds
+_dist/
+
 # OS files
 .DS_Store
 Thumbs.db
