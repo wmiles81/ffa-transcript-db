@@ -12,6 +12,7 @@ Searchable database for Future Fiction Academy content — full-text search acro
 |---|---|
 | Mac | Double-click **`start.command`** in Finder |
 | Windows | Double-click **`start.bat`** in Explorer |
+| Linux | Double-click **`start.sh`** in your file manager, or `./start.sh` in a terminal |
 
 The launcher checks for Node, installs dependencies on first run, starts the server, and opens `http://localhost:3001` in your browser automatically.
 
@@ -108,6 +109,7 @@ ffa-transcript-db/
 │   ├── main.js            # Frontend JavaScript
 │   └── style.css          # Styles (four themes)
 ├── start.command          # Mac double-click launcher
+├── start.sh               # Linux launcher
 ├── start.bat              # Windows double-click launcher
 ├── .env.example
 ├── package.json
