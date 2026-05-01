@@ -1,59 +1,17 @@
 # TranscriptDB
 
-Searchable database for Teachable course content — full-text search across lectures, transcripts, and AI-powered semantic Q&A via OpenRouter.
-
-## What's Included
-
-This package ships with **3 scraped courses** (92 lectures, 664 searchable chunks) already in the database. You can add more courses from your Teachable school by logging in through the app.
+Searchable database for Future Fiction Academy content — full-text search across weekly summit transcripts and Teachable course lectures, with optional AI-powered Q&A via OpenRouter.
 
 ## Quick Start
 
-**Prerequisites:** [Node.js](https://nodejs.org/) v18+ must be installed.
+**Prerequisites:** [Node.js](https://nodejs.org/) v18+
 
 ```bash
-# 1. Install dependencies
 npm install
-
-# 2. Start the app
 npm start
 ```
 
-Open **http://localhost:3001** in your browser. That's it.
-
-## Adding Teachable Courses
-
-1. Click **🔐 Log in to Teachable** in the sidebar
-2. Sign in with your Teachable admin credentials (opens a browser window)
-3. Once logged in, click the **+** button next to "Sources"
-4. Check the courses you want to add → **Scrape Selected**
-5. Each course's lectures will be downloaded and indexed for search
-
-## AI Search (Optional)
-
-For AI-powered semantic search using OpenRouter:
-
-1. Copy `.env.example` to `.env`:
-   ```
-   cp .env.example .env
-   ```
-2. Add your [OpenRouter API key](https://openrouter.ai/keys):
-   ```
-   OPENROUTER_API_KEY=sk-or-v1-your-key-here
-   ```
-3. Restart the server
-4. Click **⚙** → **↻ Refresh** models → select one
-5. Click the **✨ AI** toggle in the search bar
-
-> You can also enter the key via the settings UI. The `.env` file just makes it persistent across restarts.
-
-## Importing Transcript Sources
-
-To add custom transcript sources (e.g., summit recordings, workshops):
-
-1. Place your JSON transcript file(s) in the `data/` folder
-2. Run `npm run import`
-
-## Development
+Open **http://localhost:3001** in your browser.
 
 For hot-reloading during development:
 
@@ -61,33 +19,98 @@ For hot-reloading during development:
 npm run dev
 ```
 
-This starts the API server on port 3001 and Vite dev server on port 5173.
+This starts the API server on port 3001 and the Vite dev server on port 5173.
+
+## Features
+
+### Full-Text Search
+Type anything into the search bar. Results appear automatically, with matched terms highlighted. Uses SQLite FTS5 with a Porter stemmer so "publish" matches "published", "publishing", etc.
+
+### AI Search (Optional)
+Toggle **✨ AI** in the search bar to ask natural-language questions. The app retrieves the most relevant transcript chunks and sends them to an AI model via OpenRouter, which streams back a synthesized answer with citations. Press `Enter` to submit; requires an OpenRouter API key and a selected model (configured via the gear icon).
+
+### Browse & Filter
+- **Sources dropdown** — select a transcript collection or Teachable course to browse
+- **Type chips** — filter by Lesson, Pre Q&A, Post Q&A, or Work Session
+- **Sessions list** — click a session (or course section) to narrow the grid
+
+### Teachable Course Scraping
+Log in to Teachable once via the sidebar, then click **+** to pick courses to scrape. Each lecture's text is extracted and indexed. Progress is shown lecture-by-lecture.
+
+### Notion URL per Course
+Courses can store a linked Notion notes URL. When set, a **View Notes in Notion →** bar appears above the lecture grid. The URL can be set manually via "Edit URL", or detected automatically from lecture content — if a lecture contains a notion.site URL, a "Set as course Notion URL" button appears in the detail view.
+
+### Transcript Detail
+Full text of any transcript or course lecture, with:
+- Timestamps (`[00:15:30]`) styled for easy scanning
+- Speaker names highlighted
+- All URLs rendered as clickable links
+- Search terms highlighted when arriving from a search result
+
+## Adding Teachable Courses
+
+1. Click **🔐 Log in to Teachable** in the sidebar
+2. Sign in with your Teachable credentials (opens a browser window)
+3. Click the **+** button next to "Sources"
+4. Check the courses you want → **Scrape Selected**
+
+## AI Search Setup
+
+1. Get an API key at [openrouter.ai/keys](https://openrouter.ai/keys)
+2. Click the gear icon **⚙** → paste the key → **Save**
+3. Click **↻ Refresh** to load available models → select one
+4. Toggle **✨ AI** in the search bar
+
+Alternatively, set the key in a `.env` file for persistence across restarts:
+
+```bash
+cp .env.example .env
+# edit .env and set OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+## Importing Transcript Sources
+
+To import custom JSON transcript files (e.g., summit recordings):
+
+```bash
+# Place JSON files in data/ then:
+npm run import
+```
 
 ## Project Structure
 
 ```
 ffa-transcript-db/
 ├── data/
-│   ├── transcripts.db   # SQLite database (included)
-│   └── ai-settings.json # AI model preferences
-├── dist/                # Built frontend (production)
+│   ├── transcripts.db     # SQLite database
+│   ├── ai-settings.json   # AI model preferences (auto-created)
+│   └── cookies.json       # Teachable session (auto-created, not in git)
+├── dist/                  # Built frontend (production)
 ├── server/
-│   ├── db.js            # SQLite/FTS5 database layer
-│   ├── import.js        # Transcript JSON importer
-│   ├── scraper.js       # Teachable course scraper
-│   └── server.js        # Express API server
+│   ├── db.js              # SQLite/FTS5 database layer + migrations
+│   ├── import.js          # Transcript JSON importer
+│   ├── scraper.js         # Teachable course scraper (Puppeteer)
+│   └── server.js          # Express API server
 ├── src/
-│   ├── index.html       # App HTML
-│   ├── main.js          # Frontend JavaScript
-│   └── style.css        # Styles
-├── .env.example         # Environment variable template
+│   ├── index.html         # App shell
+│   ├── help.html          # In-app help
+│   ├── main.js            # Frontend JavaScript
+│   └── style.css          # Styles (four themes)
+├── .env.example
 ├── package.json
 └── vite.config.js
 ```
 
 ## Tech Stack
 
-- **Backend:** Node.js, Express, better-sqlite3, Puppeteer
-- **Frontend:** Vanilla HTML/CSS/JS, Vite
-- **Search:** SQLite FTS5 full-text search
-- **AI:** OpenRouter API (optional)
+| Layer | Technology |
+|---|---|
+| Backend | Node.js, Express, better-sqlite3 |
+| Scraping | Puppeteer |
+| Frontend | Vanilla HTML/CSS/JS, Vite |
+| Search | SQLite FTS5 |
+| AI | OpenRouter API (optional) |
+
+## License
+
+MIT — see [LICENSE](LICENSE).

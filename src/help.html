@@ -409,7 +409,12 @@
 
         <h2>The Sessions list</h2>
         <p>
-          The left sidebar's <strong>Sessions</strong> list shows all distinct lecture names (or course sections, when a Teachable course is selected). Click a session to narrow the grid to only that session's content. Click <strong>All Lectures</strong> at the top to clear the selection.
+          The left sidebar's <strong>Sessions</strong> list shows all distinct lecture names for the current transcript source. When a <strong>Teachable course</strong> is selected, it shows the course's <strong>sections</strong> (chapters) instead. Click a session or section to narrow the grid to only that content. Click <strong>All Lectures</strong> (or <strong>All Sections</strong>) at the top to clear the selection.
+        </p>
+
+        <h2>Notion notes bar</h2>
+        <p>
+          When a Teachable course has a linked Notion page, a <strong>View Notes in Notion →</strong> bar appears above the lecture grid. Click it to open the notes in a new tab. Click <strong>Edit URL</strong> to update the link. See the <strong>Teachable Courses</strong> section for how to set a Notion URL.
         </p>
 
         <h2>Returning to browse</h2>
@@ -496,8 +501,14 @@
           <li><strong>Full text</strong> — the complete transcript content</li>
           <li><strong>Timestamps</strong> — time codes like <code>[00:15:30]</code> are styled distinctly for easy scanning</li>
           <li><strong>Speaker names</strong> — patterns like "Name:" at the start of a paragraph are highlighted to make dialogue easier to follow</li>
+          <li><strong>Clickable links</strong> — all URLs in the text are rendered as live links that open in a new tab</li>
           <li><strong>Search highlights</strong> — if you arrived from a search result, your search terms are highlighted throughout the text</li>
         </ul>
+
+        <h2>Setting a Notion URL from a lecture</h2>
+        <p>
+          If a course lecture's text contains a <code>notion.site</code> link, a <strong>Set as course Notion URL</strong> button appears below the lecture header. Clicking it saves that URL to the course so it appears in the Notion notes bar on the browse grid.
+        </p>
 
         <h2>Navigation</h2>
         <p>Use the <strong>← Back</strong> button at the top left, or press <kbd>Escape</kbd> to return to your previous view.</p>
@@ -595,6 +606,20 @@
 
         <h2>How scraping works</h2>
         <p>For each lecture, the scraper first tries to download any attached text file (.txt), which gives clean content. If no text file is attached, it extracts the visible text from the lecture page DOM. The text is then chunked and indexed for full-text search and AI context.</p>
+
+        <h2>Notion URL</h2>
+        <p>
+          Each course can store a link to a Notion page (e.g., notes and transcripts for that course). When set, a <strong>View Notes in Notion →</strong> bar appears in bright blue above the lecture grid whenever that course is selected.
+        </p>
+        <p>There are two ways to set a Notion URL:</p>
+        <ul>
+          <li><strong>From the notes bar:</strong> click <strong>Edit URL</strong> (or <strong>Add Notion URL</strong> if none is set yet) and paste the URL.</li>
+          <li><strong>From a lecture:</strong> if a lecture's text contains a <code>notion.site</code> link, a <strong>Set as course Notion URL</strong> button appears in the detail view. Click it to save that URL to the course.</li>
+        </ul>
+
+        <div class="tip-box">
+          <strong>Tip:</strong> The scraper automatically extracts Notion URLs from "Notes and Transcript" lectures when you first scrape a course. If the URL wasn't found automatically, use the "Set as course Notion URL" button.
+        </div>
 
         <h2>Deleting a course</h2>
         <p>Open the Sources dropdown in the sidebar. Check the course you want to remove and click <strong>🗑 Delete Selected</strong>, then confirm. This removes the course and all its indexed content from the database.</p>
