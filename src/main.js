@@ -801,6 +801,19 @@ function renderSearchResults(results) {
                 ${r.duration ? `<span class="card-duration">${r.duration}</span>` : ''}
               </div>
             `;
+            card.onclick = () => {
+                const query = state.searchQuery;
+                state.activeSource = `course-${r.course_id}`;
+                state.activeSection = null;
+                state.activeLecture = '';
+                el.filterSource.value = state.activeSource;
+                state.searchQuery = '';
+                el.searchInput.value = '';
+                el.searchClear.classList.add('hidden');
+                loadLectures();
+                loadTranscripts();
+                loadTranscriptDetail(`clec-${r.lecture_id}`, query);
+            };
         } else {
             const badgeClass = getBadgeClass(r.transcript_type);
             card.innerHTML = `
@@ -817,7 +830,19 @@ function renderSearchResults(results) {
                 ${r.lecture_date ? `<span class="card-date">${r.lecture_date}</span>` : ''}
               </div>
             `;
-            card.onclick = () => loadTranscriptDetail(r.transcript_id, state.searchQuery);
+            card.onclick = () => {
+                const query = state.searchQuery;
+                state.activeSource = String(r.source_id);
+                state.activeLecture = r.lecture;
+                state.activeSection = null;
+                el.filterSource.value = state.activeSource;
+                state.searchQuery = '';
+                el.searchInput.value = '';
+                el.searchClear.classList.add('hidden');
+                loadLectures();
+                loadTranscripts();
+                loadTranscriptDetail(r.transcript_id, query);
+            };
         }
 
         el.resultsList.appendChild(card);
