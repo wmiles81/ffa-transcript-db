@@ -88,7 +88,10 @@
 
         <!-- Add Course Panel -->
         <div id="add-course-panel" class="add-course-panel hidden">
-          <h4>Select Courses to Add</h4>
+          <div class="add-course-header">
+            <h4>Select Courses to Add</h4>
+            <button type="button" class="add-course-close" id="cancel-add-course" title="Close">✕</button>
+          </div>
           <div id="course-picker-loading" class="course-picker-loading">Loading courses from Teachable…<div
               class="picker-bar-track">
               <div class="picker-bar"></div>
@@ -97,7 +100,6 @@
           <div id="course-picker-list" class="course-picker-list"></div>
           <div class="add-course-actions">
             <button class="add-course-submit" id="start-scrape-btn" disabled>Scrape Selected</button>
-            <button class="add-course-cancel" id="cancel-add-course">Cancel</button>
           </div>
         </div>
 
