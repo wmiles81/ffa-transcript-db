@@ -710,7 +710,6 @@ function renderLectureList(lectures) {
         item.onclick = () => {
             if (isCourse) {
                 state.activeSection = lecture.sectionId;
-                // Update active highlight directly — no need to re-fetch sections
                 el.lectureList.querySelectorAll('.lecture-item').forEach(i => i.classList.remove('active'));
                 item.classList.add('active');
             } else {
