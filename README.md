@@ -6,6 +6,17 @@ Searchable database for Future Fiction Academy content — full-text search acro
 
 **Prerequisites:** [Node.js](https://nodejs.org/) v18+
 
+### Option A — Double-click launcher (easiest)
+
+| Platform | File |
+|---|---|
+| Mac | Double-click **`start.command`** in Finder |
+| Windows | Double-click **`start.bat`** in Explorer |
+
+The launcher checks for Node, installs dependencies on first run, starts the server, and opens `http://localhost:3001` in your browser automatically.
+
+### Option B — Terminal
+
 ```bash
 npm install
 npm start
@@ -13,13 +24,13 @@ npm start
 
 Open **http://localhost:3001** in your browser.
 
-For hot-reloading during development:
+### Development (hot-reload)
 
 ```bash
 npm run dev
 ```
 
-This starts the API server on port 3001 and the Vite dev server on port 5173.
+Starts the API server on port 3001 and the Vite dev server on port 5173.
 
 ## Features
 
@@ -96,6 +107,8 @@ ffa-transcript-db/
 │   ├── help.html          # In-app help
 │   ├── main.js            # Frontend JavaScript
 │   └── style.css          # Styles (four themes)
+├── start.command          # Mac double-click launcher
+├── start.bat              # Windows double-click launcher
 ├── .env.example
 ├── package.json
 └── vite.config.js
