@@ -168,6 +168,7 @@ async function loadSources() {
             api('/api/courses'),
         ]);
         state.sources = sources;
+        state.courses = courses;
         el.filterSource.innerHTML = '<option value="">All Sources</option>';
 
         // Transcript sources (flat, same level as courses)
