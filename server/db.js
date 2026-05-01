@@ -4,7 +4,10 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, '..', 'data', 'transcripts.db');
+const DATA_DIR = path.join(__dirname, '..', 'data');
+const DB_PATH = path.join(DATA_DIR, 'transcripts.db');
+
+fs.mkdirSync(DATA_DIR, { recursive: true });
 
 let _db = null;
 
