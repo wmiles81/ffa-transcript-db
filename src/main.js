@@ -242,6 +242,7 @@ async function loadTranscripts() {
             })));
             el.browseTitle.textContent = 'Course Lectures';
             updateNotionBar(courseId);
+            switchView('browse');
             return;
         }
         const params = new URLSearchParams();
