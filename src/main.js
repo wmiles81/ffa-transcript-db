@@ -643,8 +643,7 @@ function updateNotionBar(courseId) {
     const course = (state.courses || []).find(c => String(c.id) === String(courseId));
     if (!course) { el.notionBar.classList.add('hidden'); return; }
 
-    const hasPrefix = /[A-Z]{3}:/.test(course.title);
-    if (!hasPrefix && !course.notion_url) { el.notionBar.classList.add('hidden'); return; }
+    if (!course.notion_url) { el.notionBar.classList.add('hidden'); return; }
 
     el.notionBar.classList.remove('hidden');
     if (course.notion_url) {
