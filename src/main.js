@@ -308,11 +308,13 @@ async function loadTranscriptDetail(id, highlightQuery) {
         if (typeof id === 'string' && id.startsWith('clec-')) {
             const lecId = id.replace('clec-', '');
             const lecture = await api(`/api/courses/lectures/${lecId}`);
+            const sectionPart = lecture.section_title && lecture.section_title !== lecture.title
+                ? `${lecture.section_title} · ` : '';
             renderTranscriptDetail({
                 id: id,
                 title: lecture.title,
-                filename: lecture.section_title || '',
-                lecture: lecture.course_title || '',
+                filename: `${sectionPart}${lecture.course_title || ''}`,
+                lecture: lecture.title,
                 transcript_type: 'Course',
                 lecture_date: lecture.scraped_at?.split('T')[0],
                 content: lecture.content || '(No text content)',
