@@ -359,6 +359,54 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                     await page.goto(lectureUrl, { waitUntil: 'networkidle2', timeout: 30000 });
                     await new Promise(r => setTimeout(r, 1500));
 
+                    // 0) Capture embedded video URL/provider and Notion notes URL (discovery only — no download)
+                    // Real-world finding from Phase 1 verification probe: Hotmart is the
+                    // dominant host on this Teachable site; Wistia is not used at all.
+                    // Priority: hotmart > wistia > vimeo > youtube > mp4.
+                    const metadata = await page.evaluate(() => {
+                        const videoProbes = [
+                            { provider: 'hotmart', selector: 'iframe[src*="hotmart"]', attr: 'src' },
+                            { provider: 'wistia', selector: 'iframe[src*="fast.wistia"]', attr: 'src' },
+                            { provider: 'wistia', selector: 'iframe[src*="wistia"]', attr: 'src' },
+                            { provider: 'vimeo', selector: 'iframe[src*="vimeo"]', attr: 'src' },
+                            { provider: 'youtube', selector: 'iframe[src*="youtube"]', attr: 'src' },
+                            { provider: 'youtube', selector: 'iframe[src*="youtu.be"]', attr: 'src' },
+                            { provider: 'mp4', selector: 'video[src]', attr: 'src' },
+                            { provider: 'mp4', selector: 'video source[src]', attr: 'src' },
+                        ];
+
+                        let video_url = null;
+                        let video_provider = null;
+                        for (const { provider, selector, attr } of videoProbes) {
+                            const el = document.querySelector(selector);
+                            const val = el?.getAttribute(attr);
+                            if (val) {
+                                video_url = val;
+                                video_provider = provider;
+                                break;
+                            }
+                        }
+
+                        // Notion link: prefer the first match in document order across anchors and iframes
+                        let notion_url = null;
+                        const notionCandidates = document.querySelectorAll(
+                            'a[href*="notion.so"], a[href*="notion.site"], iframe[src*="notion.so"], iframe[src*="notion.site"]'
+                        );
+                        for (const el of notionCandidates) {
+                            const val = el.getAttribute('href') || el.getAttribute('src');
+                            if (val) {
+                                notion_url = val;
+                                break;
+                            }
+                        }
+
+                        return { video_url, video_provider, notion_url };
+                    });
+
+                    db.prepare(
+                        'UPDATE course_lectures SET video_url = ?, video_provider = ?, notion_url = ? WHERE id = ?'
+                    ).run(metadata.video_url, metadata.video_provider, metadata.notion_url, lectureId);
+
                     // 1) Try downloading .txt file attachments first
                     let textContent = '';
                     const downloadUrls = await page.evaluate(() => {
