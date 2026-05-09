@@ -214,6 +214,9 @@ export function initializeDb() {
       duration TEXT,
       position INTEGER DEFAULT 0,
       scraped_at TEXT,
+      video_url TEXT,
+      video_provider TEXT,
+      notion_url TEXT,
       FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
       FOREIGN KEY (section_id) REFERENCES course_sections(id) ON DELETE CASCADE
     );
@@ -269,6 +272,17 @@ export function initializeDb() {
       const m = title.match(/^(\d{2,4})[\s\-–]/);
       if (m) update.run(m[1], id);
     }
+  }
+
+  // Migration: add video_url, video_provider, notion_url to course_lectures if missing
+  if (!lectureCols.some(c => c.name === 'video_url')) {
+    db.exec("ALTER TABLE course_lectures ADD COLUMN video_url TEXT");
+  }
+  if (!lectureCols.some(c => c.name === 'video_provider')) {
+    db.exec("ALTER TABLE course_lectures ADD COLUMN video_provider TEXT");
+  }
+  if (!lectureCols.some(c => c.name === 'notion_url')) {
+    db.exec("ALTER TABLE course_lectures ADD COLUMN notion_url TEXT");
   }
 
   return db;
