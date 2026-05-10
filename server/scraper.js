@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getDb } from './db.js';
+import { VIDEO_PROVIDERS } from './media-providers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const COOKIES_PATH = path.join(__dirname, '..', 'data', 'cookies.json');
@@ -99,7 +100,7 @@ export async function openLoginBrowser() {
 // Authenticated Browser
 // =============================================================================
 
-async function createAuthenticatedBrowser() {
+export async function createAuthenticatedBrowser() {
     const cookies = loadCookies();
     if (!cookies) throw new Error('No session found. Please log in first.');
 
@@ -363,16 +364,16 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                     // Real-world finding from Phase 1 verification probe: Hotmart is the
                     // dominant host on this Teachable site; Wistia is not used at all.
                     // Priority: hotmart > wistia > vimeo > youtube > mp4.
-                    const metadata = await page.evaluate(() => {
+                    const metadata = await page.evaluate((PROVIDERS) => {
                         const videoProbes = [
-                            { provider: 'hotmart', selector: 'iframe[src*="hotmart"]', attr: 'src' },
-                            { provider: 'wistia', selector: 'iframe[src*="fast.wistia"]', attr: 'src' },
-                            { provider: 'wistia', selector: 'iframe[src*="wistia"]', attr: 'src' },
-                            { provider: 'vimeo', selector: 'iframe[src*="vimeo"]', attr: 'src' },
-                            { provider: 'youtube', selector: 'iframe[src*="youtube"]', attr: 'src' },
-                            { provider: 'youtube', selector: 'iframe[src*="youtu.be"]', attr: 'src' },
-                            { provider: 'mp4', selector: 'video[src]', attr: 'src' },
-                            { provider: 'mp4', selector: 'video source[src]', attr: 'src' },
+                            { provider: PROVIDERS.HOTMART, selector: 'iframe[src*="hotmart"]', attr: 'src' },
+                            { provider: PROVIDERS.WISTIA, selector: 'iframe[src*="fast.wistia"]', attr: 'src' },
+                            { provider: PROVIDERS.WISTIA, selector: 'iframe[src*="wistia"]', attr: 'src' },
+                            { provider: PROVIDERS.VIMEO, selector: 'iframe[src*="vimeo"]', attr: 'src' },
+                            { provider: PROVIDERS.YOUTUBE, selector: 'iframe[src*="youtube"]', attr: 'src' },
+                            { provider: PROVIDERS.YOUTUBE, selector: 'iframe[src*="youtu.be"]', attr: 'src' },
+                            { provider: PROVIDERS.DIRECT, selector: 'video[src]', attr: 'src' },
+                            { provider: PROVIDERS.DIRECT, selector: 'video source[src]', attr: 'src' },
                         ];
 
                         let video_url = null;
@@ -401,7 +402,7 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                         }
 
                         return { video_url, video_provider, notion_url };
-                    });
+                    }, VIDEO_PROVIDERS);
 
                     db.prepare(
                         'UPDATE course_lectures SET video_url = ?, video_provider = ?, notion_url = ? WHERE id = ?'
