@@ -329,7 +329,7 @@ export function initializeDb() {
 
   // Phase 3.1: Deduplicate before creating unique index — scraper historically produced
   // two rows per lecture URL (position 0 and 1); keep the highest-id (most recent) row.
-  db.prepare(`
+  const lectureDedupResult = db.prepare(`
     DELETE FROM course_lectures
     WHERE id NOT IN (
       SELECT MAX(id)
@@ -337,6 +337,9 @@ export function initializeDb() {
       GROUP BY course_id, teachable_lecture_id
     )
   `).run();
+  if (lectureDedupResult.changes > 0) {
+    console.warn(`[db] Phase 3.1 migration: removed ${lectureDedupResult.changes} duplicate course_lectures rows (kept MAX(id) per (course_id, teachable_lecture_id))`);
+  }
 
   db.prepare(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_lectures_teachable
@@ -344,7 +347,7 @@ export function initializeDb() {
   `).run();
 
   // Phase 3.1: Deduplicate course_sections before creating unique index.
-  db.prepare(`
+  const sectionDedupResult = db.prepare(`
     DELETE FROM course_sections
     WHERE id NOT IN (
       SELECT MAX(id)
@@ -352,6 +355,9 @@ export function initializeDb() {
       GROUP BY course_id, title
     )
   `).run();
+  if (sectionDedupResult.changes > 0) {
+    console.warn(`[db] Phase 3.1 migration: removed ${sectionDedupResult.changes} duplicate course_sections rows (kept MAX(id) per (course_id, title))`);
+  }
 
   db.prepare(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sections_course_title
