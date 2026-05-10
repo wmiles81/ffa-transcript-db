@@ -195,7 +195,7 @@ export async function fetchAvailableCourses() {
 // =============================================================================
 
 export async function scrapeCourse(courseUrl, onProgress = () => { }, options = {}) {
-    const { forceRefresh = false } = options;
+    const { forceRefresh = false } = options ?? {};
     const db = getDb();
     // Handle both /courses/<id>/... and /courses/enrolled/<id>
     const courseMatch = courseUrl.match(/courses\/(?:enrolled\/)?(\d+)/);
@@ -549,7 +549,13 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }, options = 
                     }
 
                     if (textContent && textContent.length > 10) {
-                        // For new lectures this is a no-op; for force-refresh it clears stale chunks.
+                        // Phase 3.1: For new lectures this DELETE is a no-op; for force-refresh it clears
+                        // stale chunks before re-inserting. The DELETE is intentionally gated by the
+                        // text-length check: if a force-refresh fetches a lecture whose page returns
+                        // empty text (transient render bug, auth hiccup, etc.), we preserve the existing
+                        // chunks rather than dropping data we may not be able to recover. To force a
+                        // clean slate, the operator can re-run with forceRefresh once Teachable is
+                        // returning text again.
                         db.prepare('DELETE FROM course_chunks WHERE lecture_id = ?').run(lectureId);
                         const chunks = chunkText(textContent);
                         const ins = db.prepare(
