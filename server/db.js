@@ -217,6 +217,9 @@ export function initializeDb() {
       video_url TEXT,
       video_provider TEXT,
       notion_url TEXT,
+      video_local_path TEXT,
+      video_duration_sec INTEGER,
+      video_downloaded_at TEXT,
       FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
       FOREIGN KEY (section_id) REFERENCES course_sections(id) ON DELETE CASCADE
     );
@@ -283,6 +286,15 @@ export function initializeDb() {
   }
   if (!lectureCols.some(c => c.name === 'notion_url')) {
     db.exec("ALTER TABLE course_lectures ADD COLUMN notion_url TEXT");
+  }
+  if (!lectureCols.some(c => c.name === 'video_local_path')) {
+    db.exec("ALTER TABLE course_lectures ADD COLUMN video_local_path TEXT");
+  }
+  if (!lectureCols.some(c => c.name === 'video_duration_sec')) {
+    db.exec("ALTER TABLE course_lectures ADD COLUMN video_duration_sec INTEGER");
+  }
+  if (!lectureCols.some(c => c.name === 'video_downloaded_at')) {
+    db.exec("ALTER TABLE course_lectures ADD COLUMN video_downloaded_at TEXT");
   }
 
   return db;

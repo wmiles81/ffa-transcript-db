@@ -54,5 +54,9 @@ export function resolveRelative(relPath) {
     return path.join(MEDIA_LIBRARY_PATH, normalized);
 }
 
-// Fail loudly on startup if MEDIA_LIBRARY_PATH points somewhere unwritable
-ensureMediaLibraryExists();
+// Fail loudly on startup if MEDIA_LIBRARY_PATH points somewhere unwritable.
+// Set MEDIA_LIBRARY_AUTOENSURE=0 to disable the eager call (useful for CLI
+// --help / --dry-run flows on machines where the volume is unmounted).
+if (process.env.MEDIA_LIBRARY_AUTOENSURE !== '0') {
+    ensureMediaLibraryExists();
+}
