@@ -89,6 +89,28 @@ To import custom JSON transcript files (e.g., summit recordings):
 npm run import
 ```
 
+## Archiving Course Videos Locally
+
+Download every Hotmart-hosted lecture in a course to your media library
+(default location: `/Volumes/GMLDAS/Development/Software/General/ffa-transcript-db-media/`).
+Override the location by setting `MEDIA_LIBRARY_PATH`.
+
+**Prerequisites:** [`ffmpeg`](https://ffmpeg.org/) — install via `brew install ffmpeg`.
+
+```bash
+npm run archive-videos -- <courseId>
+```
+
+The CLI is idempotent — already-archived lectures are skipped, so it's safe to re-run after interruption. Use the Sources dropdown in the web UI to find the course ID, or query directly:
+
+```bash
+sqlite3 data/transcripts.db "SELECT id, title FROM courses ORDER BY scraped_at DESC LIMIT 10;"
+```
+
+(Note: the DB is encrypted; use `data/.dbkey` for sqlite3-with-cipher tools, or query via the Node REPL.)
+
+YouTube and other non-Hotmart hosts are skipped in this version — Phase 3b will add yt-dlp support.
+
 ## Project Structure
 
 ```

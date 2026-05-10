@@ -8,6 +8,7 @@
         "build": "npx vite build",
         "dist": "npm run build && mkdir -p _dist && zip -r _dist/ffa-transcript-db-v2.1.0.zip dist/ server/ package.json package-lock.json README.md LICENSE .env.example start.command start.sh start.bat -x '*.DS_Store'",
         "import": "node server/import.js",
+        "archive-videos": "node server/archive-videos.js",
         "dev": "node server/server.js & npx vite --open",
         "dev:server": "node server/server.js",
         "dev:client": "npx vite"
