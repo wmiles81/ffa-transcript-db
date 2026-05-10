@@ -695,7 +695,7 @@ app.get('/api/courses/available', async (req, res) => {
 });
 
 app.post('/api/courses/scrape', async (req, res) => {
-    const { url } = req.body;
+    const { url, forceRefresh = false } = req.body;
     if (!url) return res.status(400).json({ error: 'Course URL is required' });
     if (!hasSession()) return res.status(401).json({ error: 'Not logged in. Please log in first.' });
 
@@ -708,7 +708,7 @@ app.post('/api/courses/scrape', async (req, res) => {
     try {
         const result = await scrapeCourse(url, (message, pct) => {
             res.write(`data: ${JSON.stringify({ message, pct })}\n\n`);
-        });
+        }, { forceRefresh });
         res.write(`data: ${JSON.stringify({ done: true, ...result })}\n\n`);
     } catch (err) {
         res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);

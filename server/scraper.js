@@ -194,7 +194,8 @@ export async function fetchAvailableCourses() {
 // Course Scraping (uses course_* tables)
 // =============================================================================
 
-export async function scrapeCourse(courseUrl, onProgress = () => { }) {
+export async function scrapeCourse(courseUrl, onProgress = () => { }, options = {}) {
+    const { forceRefresh = false } = options;
     const db = getDb();
     // Handle both /courses/<id>/... and /courses/enrolled/<id>
     const courseMatch = courseUrl.match(/courses\/(?:enrolled\/)?(\d+)/);
@@ -373,6 +374,17 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
         `);
         const seenLectureIds = new Set();
 
+        // Phase 3.1: Pre-load known teachable_lecture_id values so we can skip
+        // per-lecture page fetches for unchanged content (unless --force-refresh).
+        const knownIds = new Set(
+            db.prepare(
+                'SELECT teachable_lecture_id FROM course_lectures WHERE course_id = ? AND teachable_lecture_id IS NOT NULL AND removed_at IS NULL'
+            ).all(courseId).map(r => r.teachable_lecture_id)
+        );
+        if (forceRefresh) {
+            onProgress(`  ⓘ force-refresh enabled; will re-fetch all ${knownIds.size} known lectures`, null);
+        }
+
         let scraped = 0;
         for (let si = 0; si < curriculum.length; si++) {
             const section = curriculum[si];
@@ -383,7 +395,6 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
             for (let li = 0; li < section.lectures.length; li++) {
                 const lecture = section.lectures[li];
                 const pct = 15 + Math.round((scraped / totalLectures) * 80);
-                onProgress(`Scraping: ${lecture.title}`, pct);
 
                 const { id: lectureId } = lectureUpsert.get(
                     courseId,
@@ -400,6 +411,16 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                     null  // notion_url — same
                 );
                 seenLectureIds.add(lecture.teachableLectureId);
+
+                const isKnown = knownIds.has(lecture.teachableLectureId);
+                if (isKnown && !forceRefresh) {
+                    // Skip per-lecture Puppeteer navigation; the upsert above already refreshed
+                    // title/position/section_id/scraped_at. Keep existing chunks and video_* metadata.
+                    scraped++;
+                    continue;
+                }
+
+                onProgress(`Scraping: ${lecture.title}`, pct);
 
                 try {
                     const lectureUrl = lecture.url.startsWith('http')
@@ -528,6 +549,8 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                     }
 
                     if (textContent && textContent.length > 10) {
+                        // For new lectures this is a no-op; for force-refresh it clears stale chunks.
+                        db.prepare('DELETE FROM course_chunks WHERE lecture_id = ?').run(lectureId);
                         const chunks = chunkText(textContent);
                         const ins = db.prepare(
                             'INSERT INTO course_chunks (lecture_id, content, position) VALUES (?, ?, ?)'
