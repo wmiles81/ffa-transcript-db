@@ -297,6 +297,67 @@ export function initializeDb() {
     db.exec("ALTER TABLE course_lectures ADD COLUMN video_downloaded_at TEXT");
   }
 
+  // Phase 3.1: Add teachable_lecture_id for idempotent upserts
+  if (!lectureCols.some(c => c.name === 'teachable_lecture_id')) {
+    db.prepare('ALTER TABLE course_lectures ADD COLUMN teachable_lecture_id TEXT').run();
+  }
+  if (!lectureCols.some(c => c.name === 'removed_at')) {
+    db.prepare('ALTER TABLE course_lectures ADD COLUMN removed_at TEXT').run();
+  }
+
+  // Phase 3.1: One-time backfill: extract teachable_lecture_id from URL.
+  // URL format: '/courses/<slug>/lectures/<id>' or 'https://.../courses/<slug>/lectures/<id>'
+  db.prepare(`
+    UPDATE course_lectures
+    SET teachable_lecture_id = substr(url, instr(url, '/lectures/') + length('/lectures/'))
+    WHERE teachable_lecture_id IS NULL
+      AND url LIKE '%/lectures/%'
+  `).run();
+
+  const stillNull = db.prepare(
+    'SELECT COUNT(*) AS n FROM course_lectures WHERE teachable_lecture_id IS NULL'
+  ).get().n;
+  if (stillNull > 0) {
+    const samples = db.prepare(
+      'SELECT id, course_id, title, url FROM course_lectures WHERE teachable_lecture_id IS NULL LIMIT 5'
+    ).all();
+    throw new Error(
+      `Phase 3.1 migration: ${stillNull} course_lectures rows have NULL teachable_lecture_id after backfill. ` +
+      `Sample rows: ${JSON.stringify(samples)}. Fix the URL data or this migration before retrying.`
+    );
+  }
+
+  // Phase 3.1: Deduplicate before creating unique index — scraper historically produced
+  // two rows per lecture URL (position 0 and 1); keep the highest-id (most recent) row.
+  db.prepare(`
+    DELETE FROM course_lectures
+    WHERE id NOT IN (
+      SELECT MAX(id)
+      FROM course_lectures
+      GROUP BY course_id, teachable_lecture_id
+    )
+  `).run();
+
+  db.prepare(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_lectures_teachable
+    ON course_lectures(course_id, teachable_lecture_id)
+  `).run();
+
+  // Phase 3.1: Deduplicate course_sections before creating unique index.
+  db.prepare(`
+    DELETE FROM course_sections
+    WHERE id NOT IN (
+      SELECT MAX(id)
+      FROM course_sections
+      GROUP BY course_id, title
+    )
+  `).run();
+
+  db.prepare(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_sections_course_title
+    ON course_sections(course_id, title)
+  `).run();
+
   return db;
 }
 
