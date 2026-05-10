@@ -7,6 +7,23 @@ process.env.MEDIA_LIBRARY_AUTOENSURE = '0';
 
 import { spawn } from 'child_process';
 
+// Register a minimal SIGINT handler BEFORE any long-running work (dynamic
+// imports, encrypted-DB open, pre-flight). This ensures Ctrl-C during pre-flight
+// is caught instead of falling through to Node's default handler (which exits
+// without giving us a chance to closeDb()). The handler just sets a flag; the
+// natural exit path checks the flag and shuts down cleanly. A second Ctrl-C
+// (e.g., user really wants to stop NOW, not after the current lecture finishes)
+// triggers an immediate exit.
+let interrupted = false;
+process.on('SIGINT', () => {
+    if (interrupted) {
+        // Second Ctrl-C — exit immediately
+        process.exit(130);
+    }
+    interrupted = true;
+    console.log('\n⚠ Interrupt received — finishing current operation, please wait...');
+});
+
 // Dynamic imports — see comment above. These transitively import media-library.js.
 const { downloadLectureVideo } = await import('./media-downloader.js');
 const { ensureMediaLibraryExists } = await import('./media-library.js');
@@ -123,15 +140,6 @@ async function main() {
     const tally = { downloaded: 0, already_archived: 0, wrong_provider: 0, failed: 0 };
     let completed = 0;
 
-    let interrupted = false;
-    process.on('SIGINT', () => {
-        interrupted = true;
-        console.log('');
-        console.log(`Interrupted; ${completed} lectures completed`);
-        closeDb();
-        process.exit(130);
-    });
-
     for (let i = 0; i < lectures.length; i++) {
         if (interrupted) break;
         const lecture = lectures[i];
@@ -168,6 +176,13 @@ async function main() {
             console.log(`  · Skipped (provider ${p} not yet supported)`);
         }
         completed++;
+    }
+
+    if (interrupted) {
+        console.log('');
+        console.log(`Interrupted; ${completed} lectures completed before stopping.`);
+        closeDb();
+        process.exit(130);
     }
 
     console.log('');
