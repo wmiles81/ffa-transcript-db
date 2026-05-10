@@ -474,9 +474,17 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }, options = 
                         return { video_url, video_provider, notion_url };
                     }, VIDEO_PROVIDERS);
 
-                    db.prepare(
-                        'UPDATE course_lectures SET video_url = ?, video_provider = ?, notion_url = ? WHERE id = ?'
-                    ).run(metadata.video_url, metadata.video_provider, metadata.notion_url, lectureId);
+                    // Phase 3.1: COALESCE preserves existing values when the per-lecture page extract
+                    // returns NULL (e.g., Hotmart iframe didn't render in time, transient auth glitch).
+                    // This protects against force-refresh inadvertently NULL-ing out previously-good
+                    // video metadata while video_local_path remains intact.
+                    db.prepare(`
+                        UPDATE course_lectures
+                        SET video_url      = COALESCE(?, video_url),
+                            video_provider = COALESCE(?, video_provider),
+                            notion_url     = COALESCE(?, notion_url)
+                        WHERE id = ?
+                    `).run(metadata.video_url, metadata.video_provider, metadata.notion_url, lectureId);
 
                     // 1) Try downloading .txt file attachments first
                     let textContent = '';
