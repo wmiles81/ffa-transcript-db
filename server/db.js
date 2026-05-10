@@ -307,6 +307,9 @@ export function initializeDb() {
 
   // Phase 3.1: One-time backfill: extract teachable_lecture_id from URL.
   // URL format: '/courses/<slug>/lectures/<id>' or 'https://.../courses/<slug>/lectures/<id>'
+  // Assumes a clean numeric-only suffix (no trailing slash, no query string). The forward
+  // scraper (T2) uses a regex /\/lectures\/(\d+)/ that protects new rows; the abort guard
+  // below catches any backfilled row that ended up with a non-extractable value.
   db.prepare(`
     UPDATE course_lectures
     SET teachable_lecture_id = substr(url, instr(url, '/lectures/') + length('/lectures/'))
@@ -345,6 +348,31 @@ export function initializeDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_lectures_teachable
     ON course_lectures(course_id, teachable_lecture_id)
   `).run();
+
+  // Phase 3.1: Guard against silent cascade-deletion of lecture rows when section
+  // dedup deletes a section that lectures still reference. The course_lectures
+  // FK is ON DELETE CASCADE, so deleting an under-referenced section silently
+  // takes its lectures (and any video_local_path on them) with it. Fail loud
+  // and require manual investigation if this scenario is detected.
+  const orphanedLectureCount = db.prepare(`
+    SELECT COUNT(*) AS n FROM course_lectures
+    WHERE section_id IS NOT NULL
+      AND section_id NOT IN (SELECT MAX(id) FROM course_sections GROUP BY course_id, title)
+  `).get().n;
+  if (orphanedLectureCount > 0) {
+    const samples = db.prepare(`
+      SELECT cl.id, cl.course_id, cl.title, cl.section_id, cl.video_local_path
+      FROM course_lectures cl
+      WHERE cl.section_id IS NOT NULL
+        AND cl.section_id NOT IN (SELECT MAX(id) FROM course_sections GROUP BY course_id, title)
+      LIMIT 5
+    `).all();
+    throw new Error(
+      `Phase 3.1 migration: ${orphanedLectureCount} course_lectures rows reference section IDs that would be cascade-deleted by section dedup. ` +
+      `Manual investigation required — these lectures may have video archives that would be silently lost. ` +
+      `Sample rows: ${JSON.stringify(samples)}.`
+    );
+  }
 
   // Phase 3.1: Deduplicate course_sections before creating unique index.
   const sectionDedupResult = db.prepare(`
