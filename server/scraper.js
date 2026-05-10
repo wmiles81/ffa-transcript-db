@@ -345,6 +345,11 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
             ON CONFLICT(course_id, title) DO UPDATE SET position = excluded.position
             RETURNING id
         `);
+        // Phase 3.1: Upsert by (course_id, teachable_lecture_id). On conflict, refresh metadata
+        // but PRESERVE archive ownership: video_local_path, video_duration_sec, and
+        // video_downloaded_at are intentionally absent from DO UPDATE SET — those are written
+        // by archive-videos.js and must survive re-scrapes untouched. Adding any of those three
+        // to the SET clause would silently destroy downloaded video state on the next re-scrape.
         const lectureUpsert = db.prepare(`
             INSERT INTO course_lectures (
                 course_id, section_id, teachable_lecture_id,
@@ -540,6 +545,11 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
         }
 
         // Phase 3.1: Soft-delete lectures that are no longer in Teachable.
+        // Secondary defense: the earlier `if (totalLectures === 0)` throw at this function's
+        // listing-page extraction already covers the "zero lectures returned by Teachable" case.
+        // This guard catches the unreachable-in-current-code scenario where lectures appeared
+        // in the listing but somehow none made it into seenLectureIds — better to fail loud
+        // than silently soft-delete every lecture in the course.
         if (seenLectureIds.size === 0) {
             throw new Error(
                 `Scrape returned 0 lectures for course ${courseId} — refusing to soft-delete the entire course (likely auth or DOM-extraction issue)`
