@@ -363,7 +363,7 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                     // 0) Capture embedded video URL/provider and Notion notes URL (discovery only — no download)
                     // Real-world finding from Phase 1 verification probe: Hotmart is the
                     // dominant host on this Teachable site; Wistia is not used at all.
-                    // Priority: hotmart > wistia > vimeo > youtube > mp4.
+                    // Priority: hotmart > wistia > vimeo > youtube > direct.
                     const metadata = await page.evaluate((PROVIDERS) => {
                         const videoProbes = [
                             { provider: PROVIDERS.HOTMART, selector: 'iframe[src*="hotmart"]', attr: 'src' },
