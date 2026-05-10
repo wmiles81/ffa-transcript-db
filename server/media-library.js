@@ -27,10 +27,13 @@ export function lectureDir(courseId, lectureId) {
 }
 
 export function relativize(absPath) {
+    if (typeof absPath !== 'string' || !path.isAbsolute(absPath)) {
+        throw new Error(`relativize: expected absolute path, got: ${absPath}`);
+    }
     const rel = path.relative(MEDIA_LIBRARY_PATH, absPath);
-    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
         throw new Error(
-            `Path is outside MEDIA_LIBRARY_PATH: ${absPath}`
+            `Path is outside or equal to MEDIA_LIBRARY_PATH: ${absPath}`
         );
     }
     return rel;
