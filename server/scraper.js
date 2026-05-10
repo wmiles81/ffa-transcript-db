@@ -265,11 +265,15 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                             // Skip Teachable nav artifacts: "Start" CTAs and promos
                             if (cleanTitle === 'Start' || promoTitles.has(cleanTitle)) return;
                             const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
+                            const teachableLectureIdMatch = href.match(/\/lectures\/(\d+)/);
+                            if (!teachableLectureIdMatch) return; // defensive; href.includes('/lectures/') already passed
+                            const teachableLectureId = teachableLectureIdMatch[1];
                             lectures.push({
                                 title: cleanTitle,
                                 url: href,
                                 duration: durMatch ? (durMatch[1] || durMatch[2]) : null,
                                 classNumber: classNumMatch ? classNumMatch[1] : null,
+                                teachableLectureId,
                             });
                         }
                     });
@@ -293,11 +297,15 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
                         const cleanTitle = title || text;
                         if (cleanTitle === 'Start' || promoTitles.has(cleanTitle)) return;
                         const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
+                        const teachableLectureIdMatch = href.match(/\/lectures\/(\d+)/);
+                        if (!teachableLectureIdMatch) return;
+                        const teachableLectureId = teachableLectureIdMatch[1];
                         fallbackLectures.push({
                             title: cleanTitle,
                             url: href,
                             duration: durMatch ? (durMatch[1] || durMatch[2]) : null,
                             classNumber: classNumMatch ? classNumMatch[1] : null,
+                            teachableLectureId,
                         });
                     }
                 });
@@ -321,8 +329,6 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
         let courseId;
         if (existing) {
             courseId = existing.id;
-            db.prepare('DELETE FROM course_sections WHERE course_id = ?').run(courseId);
-            db.prepare('DELETE FROM course_lectures WHERE course_id = ?').run(courseId);
             db.prepare('UPDATE courses SET title = ?, class_number = ?, url = ?, scraped_at = ? WHERE id = ?')
                 .run(courseTitle, classNumber, courseUrl, new Date().toISOString(), courseId);
         } else {
@@ -332,25 +338,63 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
             courseId = result.lastInsertRowid;
         }
 
+        // Phase 3.1: Hoist prepared statements so they're compiled once per scrape
+        const sectionUpsert = db.prepare(`
+            INSERT INTO course_sections (course_id, title, position)
+            VALUES (?, ?, ?)
+            ON CONFLICT(course_id, title) DO UPDATE SET position = excluded.position
+            RETURNING id
+        `);
+        const lectureUpsert = db.prepare(`
+            INSERT INTO course_lectures (
+                course_id, section_id, teachable_lecture_id,
+                title, url, duration, position, scraped_at, class_number,
+                video_url, video_provider, notion_url, removed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            ON CONFLICT(course_id, teachable_lecture_id) DO UPDATE SET
+                section_id     = excluded.section_id,
+                title          = excluded.title,
+                url            = excluded.url,
+                duration       = excluded.duration,
+                position       = excluded.position,
+                scraped_at     = excluded.scraped_at,
+                class_number   = excluded.class_number,
+                video_url      = COALESCE(excluded.video_url, course_lectures.video_url),
+                video_provider = COALESCE(excluded.video_provider, course_lectures.video_provider),
+                notion_url     = COALESCE(excluded.notion_url, course_lectures.notion_url),
+                removed_at     = NULL
+            RETURNING id
+        `);
+        const seenLectureIds = new Set();
+
         let scraped = 0;
         for (let si = 0; si < curriculum.length; si++) {
             const section = curriculum[si];
             // Skip the promo section entirely
             if (section.title && PROMO_TITLES.has(section.title)) continue;
-            const secResult = db.prepare(
-                'INSERT INTO course_sections (course_id, title, position) VALUES (?, ?, ?)'
-            ).run(courseId, section.title, si);
-            const sectionId = secResult.lastInsertRowid;
+            const { id: sectionId } = sectionUpsert.get(courseId, section.title, si);
 
             for (let li = 0; li < section.lectures.length; li++) {
                 const lecture = section.lectures[li];
                 const pct = 15 + Math.round((scraped / totalLectures) * 80);
                 onProgress(`Scraping: ${lecture.title}`, pct);
 
-                const lecResult = db.prepare(
-                    'INSERT INTO course_lectures (course_id, section_id, title, url, duration, position, scraped_at, class_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-                ).run(courseId, sectionId, lecture.title, lecture.url, lecture.duration, li, new Date().toISOString(), lecture.classNumber ?? null);
-                const lectureId = lecResult.lastInsertRowid;
+                const { id: lectureId } = lectureUpsert.get(
+                    courseId,
+                    sectionId,
+                    lecture.teachableLectureId,
+                    lecture.title,
+                    lecture.url,
+                    lecture.duration,
+                    li,
+                    new Date().toISOString(),
+                    lecture.classNumber ?? null,
+                    null, // video_url — populated by per-lecture page fetch below if found
+                    null, // video_provider — same
+                    null  // notion_url — same
+                );
+                seenLectureIds.add(lecture.teachableLectureId);
 
                 try {
                     const lectureUrl = lecture.url.startsWith('http')
@@ -495,8 +539,28 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }) {
             }
         }
 
+        // Phase 3.1: Soft-delete lectures that are no longer in Teachable.
+        if (seenLectureIds.size === 0) {
+            throw new Error(
+                `Scrape returned 0 lectures for course ${courseId} — refusing to soft-delete the entire course (likely auth or DOM-extraction issue)`
+            );
+        }
+        const seenIds = [...seenLectureIds];
+        const placeholders = seenIds.map(() => '?').join(',');
+        const nowIso = new Date().toISOString();
+        const softDeleteResult = db.prepare(`
+            UPDATE course_lectures
+            SET removed_at = ?
+            WHERE course_id = ?
+              AND teachable_lecture_id NOT IN (${placeholders})
+              AND removed_at IS NULL
+        `).run(nowIso, courseId, ...seenIds);
+        if (softDeleteResult.changes > 0) {
+            onProgress(`  ⓘ Soft-deleted ${softDeleteResult.changes} lectures no longer in Teachable`, null);
+        }
+
         const finalCount = db.prepare(
-            'SELECT COUNT(*) as count FROM course_lectures WHERE course_id = ?'
+            'SELECT COUNT(*) as count FROM course_lectures WHERE course_id = ? AND removed_at IS NULL'
         ).get(courseId);
         db.prepare('UPDATE courses SET lecture_count = ? WHERE id = ?')
             .run(finalCount.count, courseId);
