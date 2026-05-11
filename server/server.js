@@ -352,7 +352,11 @@ if (fs.existsSync(envPath)) {
     }
 }
 
-const SETTINGS_PATH = path.join(__dirname, '..', 'data', 'ai-settings.json');
+// Phase 4a: ai-settings honors DATA_DIR env var (same pattern as server/db.js)
+const SETTINGS_DIR = process.env.DATA_DIR
+    ? path.resolve(process.env.DATA_DIR)
+    : path.join(__dirname, '..', 'data');
+const SETTINGS_PATH = path.join(SETTINGS_DIR, 'ai-settings.json');
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 
 function loadSettings() {
