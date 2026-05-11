@@ -7,7 +7,6 @@ import { initializeDb, getDb, closeDb } from './db.js';
 import { scrapeCourse, deleteCourse, openLoginBrowser, hasSession, clearSession, fetchAvailableCourses } from './scraper.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = process.env.PORT || 3001;
 
 const app = express();
 app.use(cors());
@@ -909,8 +908,7 @@ export async function startServer(port = process.env.PORT || 3001) {
 }
 
 // Auto-start when invoked directly as a CLI (preserves `npm run start` behavior).
-const isMainModule = import.meta.url === `file://${process.argv[1]}`
-    || import.meta.url === `file:${process.argv[1]}`;
+const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMainModule) {
     startServer().catch(err => {
         console.error('Server failed to start:', err);
