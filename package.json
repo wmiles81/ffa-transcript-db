@@ -1,6 +1,7 @@
 {
     "name": "ffa-transcript-db",
     "version": "2.1.0",
+    "main": "electron/main.cjs",
     "description": "FFA Transcript Database — search transcripts and Teachable course content",
     "type": "module",
     "scripts": {
@@ -11,7 +12,9 @@
         "archive-videos": "node server/archive-videos.js",
         "dev": "node server/server.js & npx vite --open",
         "dev:server": "node server/server.js",
-        "dev:client": "npx vite"
+        "dev:client": "npx vite",
+        "start:electron": "electron electron/main.cjs",
+        "dev:electron": "NODE_ENV=development electron electron/main.cjs"
     },
     "dependencies": {
         "better-sqlite3-multiple-ciphers": "^12.9.0",
@@ -20,6 +23,7 @@
         "puppeteer": "^24.0.0"
     },
     "devDependencies": {
+        "electron": "^32.3.3",
         "vite": "^6.0.0"
     }
 }
