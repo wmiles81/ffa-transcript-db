@@ -109,5 +109,6 @@ async function main() {
 
 main().catch((err) => {
     console.error('Fatal:', err);
+    try { closeDb(); } catch { /* db may not be open */ }
     process.exit(1);
 });
