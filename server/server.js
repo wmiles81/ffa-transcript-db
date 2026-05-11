@@ -885,16 +885,38 @@ if (fs.existsSync(distPath)) {
     });
 }
 
-// --- Start server ---
-app.listen(PORT, () => {
-    const servingUi = fs.existsSync(distPath);
-    console.log(`\n🚀 FFA Transcript DB running at http://localhost:${PORT}`);
-    if (servingUi) {
-        console.log(`   ✅ Serving app UI from dist/`);
-    }
-    console.log(`   📡 Teachable auth: ${hasSession() ? 'Logged in ✓' : 'Not logged in'}`);
-    console.log(`\n   Open http://localhost:${PORT} in your browser\n`);
-});
+// Phase 4a: Export app and a startServer() function so Electron's main process
+// (or any other host) can start the server programmatically. When invoked
+// directly as `node server/server.js`, auto-start on env PORT or 3001.
+
+export { app };
+
+export async function startServer(port = process.env.PORT || 3001) {
+    return new Promise((resolve, reject) => {
+        const server = app.listen(port, '127.0.0.1', () => {
+            const actualPort = server.address().port;
+            const servingUi = fs.existsSync(distPath);
+            console.log(`\n🚀 FFA Transcript DB running at http://127.0.0.1:${actualPort}`);
+            if (servingUi) {
+                console.log(`   ✅ Serving app UI from dist/`);
+            }
+            console.log(`   📡 Teachable auth: ${hasSession() ? 'Logged in ✓' : 'Not logged in'}`);
+            console.log(`\n   Open http://127.0.0.1:${actualPort} in your browser\n`);
+            resolve({ server, port: actualPort });
+        });
+        server.on('error', reject);
+    });
+}
+
+// Auto-start when invoked directly as a CLI (preserves `npm run start` behavior).
+const isMainModule = import.meta.url === `file://${process.argv[1]}`
+    || import.meta.url === `file:${process.argv[1]}`;
+if (isMainModule) {
+    startServer().catch(err => {
+        console.error('Server failed to start:', err);
+        process.exit(1);
+    });
+}
 
 process.on('SIGINT', () => {
     closeDb();
