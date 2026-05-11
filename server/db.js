@@ -5,7 +5,12 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '..', 'data');
+// Phase 4a: data/ directory is configurable via DATA_DIR env var so Electron's
+// main process can point us at app.getPath('userData')/data while CLI
+// invocations default to ./data relative to the project root.
+const DATA_DIR = process.env.DATA_DIR
+    ? path.resolve(process.env.DATA_DIR)
+    : path.join(__dirname, '..', 'data');
 const DB_PATH = path.join(DATA_DIR, 'transcripts.db');
 const KEY_PATH = path.join(DATA_DIR, '.dbkey');
 

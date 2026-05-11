@@ -6,7 +6,13 @@ import { getDb } from './db.js';
 import { VIDEO_PROVIDERS } from './media-providers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const COOKIES_PATH = path.join(__dirname, '..', 'data', 'cookies.json');
+// Phase 4a: data/ directory is configurable via DATA_DIR env var so Electron's
+// main process can point us at app.getPath('userData')/data while CLI
+// invocations default to ./data relative to the project root.
+const DATA_DIR = process.env.DATA_DIR
+    ? path.resolve(process.env.DATA_DIR)
+    : path.join(__dirname, '..', 'data');
+const COOKIES_PATH = path.join(DATA_DIR, 'cookies.json');
 const SCHOOL_URL = process.env.TEACHABLE_SCHOOL_URL || 'https://future-fiction-academy.teachable.com';
 
 // Teachable promotional lectures injected into every course — skip during scrape
