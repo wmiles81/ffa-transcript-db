@@ -98,6 +98,11 @@
             </div>
           </div>
           <div id="course-picker-list" class="course-picker-list"></div>
+          <!-- Phase 4b: force-refresh option -->
+          <label class="scrape-modal-option">
+            <input type="checkbox" id="scrape-force-refresh" />
+            <span>Force re-fetch transcripts (slower; pulls fresh transcripts even for known lectures)</span>
+          </label>
           <div class="add-course-actions">
             <button class="add-course-submit" id="start-scrape-btn" disabled>Scrape Selected</button>
           </div>
@@ -177,12 +182,23 @@
           </div>
         </div>
 
+        <!-- Phase 4b: ffmpeg pre-flight banner -->
+        <div id="ffmpeg-banner" class="ffmpeg-banner hidden">
+          <strong>ffmpeg is required to download videos</strong>
+          <p>Install via <code>brew install ffmpeg</code> (macOS) or your system package manager. Video archiving is disabled until ffmpeg is available.</p>
+          <button id="ffmpeg-banner-recheck" class="settings-btn">Recheck</button>
+        </div>
+
         <!-- Results / Transcript View -->
         <div id="view-container">
           <!-- Default: Browse View -->
           <div id="browse-view">
             <div class="section-header">
               <h2 id="browse-title">All Transcripts</h2>
+              <!-- Phase 4b: Archive Videos button (shown when a course is selected) -->
+              <button id="archive-videos-btn" class="archive-videos-btn hidden" data-course-id="">
+                ↓ Archive Videos
+              </button>
             </div>
             <div id="notion-bar" class="notion-bar hidden">
               <a id="notion-link" class="notion-link" target="_blank" rel="noopener noreferrer">View Notes in Notion →</a>
@@ -263,6 +279,29 @@
       <div class="delete-modal-actions">
         <button class="delete-modal-confirm" id="delete-modal-confirm">Yes, delete</button>
         <button class="delete-modal-cancel" id="delete-modal-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Phase 4b: Archive Videos progress modal -->
+  <div id="archive-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="archive-modal-title">
+    <div class="modal archive-modal-content">
+      <div class="modal-header">
+        <h2 id="archive-modal-title">Archiving Videos</h2>
+        <button id="archive-modal-close" class="modal-close" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="archive-status-line" class="archive-status-line">Starting…</div>
+        <div id="archive-current-lecture" class="archive-current-lecture"></div>
+        <div id="archive-progress-bar" class="archive-progress-bar">
+          <div id="archive-progress-fill" class="archive-progress-fill"></div>
+        </div>
+        <ul id="archive-lecture-list" class="archive-lecture-list"></ul>
+        <div id="archive-summary" class="archive-summary hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="archive-cancel-btn" class="delete-modal-confirm">Cancel</button>
+        <button id="archive-done-btn" class="add-course-submit hidden">Done</button>
       </div>
     </div>
   </div>

@@ -243,6 +243,12 @@ async function loadTranscripts() {
             })));
             el.browseTitle.textContent = 'Course Lectures';
             updateNotionBar(courseId);
+            // Phase 4b: show archive button for this course
+            const archiveBtn = document.getElementById('archive-videos-btn');
+            if (archiveBtn) {
+                archiveBtn.dataset.courseId = String(courseId);
+                archiveBtn.classList.remove('hidden');
+            }
             switchView('browse');
             return;
         }
@@ -254,6 +260,9 @@ async function loadTranscripts() {
         renderTranscriptGrid(data.transcripts);
         el.browseTitle.textContent = state.activeLecture || 'All Transcripts';
         if (el.notionBar) el.notionBar.classList.add('hidden');
+        // Phase 4b: hide archive button when not on a course view
+        const archiveBtn = document.getElementById('archive-videos-btn');
+        if (archiveBtn) archiveBtn.classList.add('hidden');
     } catch (e) {
         console.error('Failed to load transcripts:', e);
     }
@@ -1283,11 +1292,14 @@ async function startScrape(url, { hideOnDone = true } = {}) {
     el.scrapePct.textContent = '0%';
     el.scrapeBar.style.width = '0%';
 
+    // Phase 4b: read force-refresh checkbox
+    const forceRefresh = document.getElementById('scrape-force-refresh')?.checked || false;
+
     try {
         const res = await fetch('/api/courses/scrape', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url }),
+            body: JSON.stringify({ url, forceRefresh }),
         });
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -1309,6 +1321,9 @@ async function startScrape(url, { hideOnDone = true } = {}) {
                     }
                     if (data.done) {
                         el.scrapeMessage.textContent = `✅ Scraped ${data.lectureCount} lectures from "${data.title}"`;
+                        // Phase 4b: uncheck force-refresh after successful scrape
+                        const cb = document.getElementById('scrape-force-refresh');
+                        if (cb) cb.checked = false;
                         await loadCourses();
                         await loadStats();
                         if (hideOnDone) setTimeout(() => el.scrapeProgress.classList.add('hidden'), 3000);
@@ -1406,3 +1421,201 @@ function setupCourseListeners() {
         });
     }
 }
+
+// =============================================================================
+// Phase 4b: ffmpeg pre-flight banner
+// =============================================================================
+
+async function checkFfmpegAvailability() {
+    try {
+        const res = await fetch('/api/system/ffmpeg');
+        const data = await res.json();
+        const banner = document.getElementById('ffmpeg-banner');
+        const archiveBtn = document.getElementById('archive-videos-btn');
+        if (!data.ok) {
+            banner?.classList.remove('hidden');
+            if (archiveBtn) archiveBtn.disabled = true;
+        } else {
+            banner?.classList.add('hidden');
+            if (archiveBtn) archiveBtn.disabled = false;
+        }
+    } catch (err) {
+        console.warn('ffmpeg check failed:', err.message);
+    }
+}
+checkFfmpegAvailability();
+document.getElementById('ffmpeg-banner-recheck')?.addEventListener('click', checkFfmpegAvailability);
+
+// =============================================================================
+// Phase 4b: Archive Videos modal handler
+// =============================================================================
+
+async function startArchive(courseId) {
+    const modal = document.getElementById('archive-modal');
+    const statusLine = document.getElementById('archive-status-line');
+    const currentLecture = document.getElementById('archive-current-lecture');
+    const progressFill = document.getElementById('archive-progress-fill');
+    const lectureList = document.getElementById('archive-lecture-list');
+    const summary = document.getElementById('archive-summary');
+    const cancelBtn = document.getElementById('archive-cancel-btn');
+    const doneBtn = document.getElementById('archive-done-btn');
+
+    // Reset UI
+    statusLine.textContent = 'Starting…';
+    currentLecture.textContent = '';
+    progressFill.style.width = '0%';
+    lectureList.innerHTML = '';
+    summary.classList.add('hidden');
+    summary.textContent = '';
+    cancelBtn.classList.remove('hidden');
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = 'Cancel';
+    doneBtn.classList.add('hidden');
+    modal.classList.remove('hidden');
+
+    let total = 0;
+    const lectureRows = new Map(); // lectureId -> <li> element
+
+    cancelBtn.onclick = async () => {
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = 'Cancelling…';
+        try {
+            await fetch(`/api/courses/${courseId}/archive-videos`, { method: 'DELETE' });
+        } catch (err) {
+            console.warn('cancel failed:', err.message);
+        }
+    };
+
+    try {
+        const res = await fetch(`/api/courses/${courseId}/archive-videos`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ force: false }),
+        });
+        if (!res.ok) {
+            statusLine.textContent = `Error: ${res.status} ${res.statusText}`;
+            cancelBtn.classList.add('hidden');
+            doneBtn.classList.remove('hidden');
+            return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            // SSE messages are separated by blank lines; each message starts with "data: "
+            const messages = buffer.split('\n\n');
+            buffer = messages.pop(); // keep incomplete tail
+
+            for (const msg of messages) {
+                if (!msg.startsWith('data: ')) continue;
+                let event;
+                try {
+                    event = JSON.parse(msg.slice('data: '.length));
+                } catch (e) {
+                    continue;
+                }
+
+                switch (event.type) {
+                    case 'preflight':
+                        if (!event.ok) {
+                            statusLine.textContent = `ffmpeg unavailable: ${event.error}`;
+                            cancelBtn.classList.add('hidden');
+                            doneBtn.classList.remove('hidden');
+                            return;
+                        }
+                        break;
+                    case 'course':
+                        total = event.total;
+                        statusLine.textContent = `Course: ${event.title} — ${total} lectures`;
+                        break;
+                    case 'lecture': {
+                        let li = lectureRows.get(event.lectureId);
+                        if (!li) {
+                            li = document.createElement('li');
+                            li.className = 'archive-lecture-row';
+                            li.dataset.lectureId = event.lectureId;
+                            lectureList.appendChild(li);
+                            lectureRows.set(event.lectureId, li);
+                        }
+                        if (event.status === 'start') {
+                            currentLecture.textContent = `[${event.index}/${total}] ${event.title}`;
+                            const pct = ((event.index - 1) / total) * 100;
+                            progressFill.style.width = `${pct}%`;
+                            li.textContent = `[${event.index}/${total}] ${event.title} — starting…`;
+                            li.className = 'archive-lecture-row pending';
+                        } else if (event.status === 'downloading') {
+                            li.textContent = `[${event.index}/${total}] ${event.title} — ${event.detail}`;
+                            li.className = 'archive-lecture-row downloading';
+                        } else if (event.status === 'done') {
+                            li.textContent = `[${event.index}/${total}] ${event.title} — downloaded`;
+                            li.className = 'archive-lecture-row done';
+                        } else if (event.status === 'skipped') {
+                            li.textContent = `[${event.index}/${total}] ${event.title} — ${event.detail}`;
+                            li.className = 'archive-lecture-row skipped';
+                        } else if (event.status === 'error') {
+                            li.textContent = `[${event.index}/${total}] ${event.title} — ${event.detail}`;
+                            li.className = 'archive-lecture-row error';
+                        }
+                        break;
+                    }
+                    case 'summary': {
+                        progressFill.style.width = '100%';
+                        summary.classList.remove('hidden');
+                        summary.innerHTML = `
+                            <h3>Summary</h3>
+                            <ul>
+                                <li>Downloaded: ${event.downloaded}</li>
+                                <li>Already archived: ${event.alreadyArchived}</li>
+                                <li>Wrong provider: ${event.wrongProvider}</li>
+                                <li>Failed: ${event.failed}</li>
+                                <li>Elapsed: ${Math.round(event.elapsedMs / 1000)}s</li>
+                                ${event.interrupted ? '<li><em>Cancelled</em></li>' : ''}
+                            </ul>
+                        `;
+                        cancelBtn.classList.add('hidden');
+                        doneBtn.classList.remove('hidden');
+                        break;
+                    }
+                    case 'error':
+                        statusLine.textContent = `Error: ${event.error}`;
+                        cancelBtn.classList.add('hidden');
+                        doneBtn.classList.remove('hidden');
+                        break;
+                    case 'done':
+                        // Stream complete — if summary hasn't shown yet, show done button
+                        if (doneBtn.classList.contains('hidden')) {
+                            cancelBtn.classList.add('hidden');
+                            doneBtn.classList.remove('hidden');
+                        }
+                        break;
+                }
+            }
+        }
+    } catch (err) {
+        statusLine.textContent = `Connection error: ${err.message}`;
+        cancelBtn.classList.add('hidden');
+        doneBtn.classList.remove('hidden');
+    } finally {
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = 'Cancel';
+    }
+}
+
+document.getElementById('archive-videos-btn')?.addEventListener('click', (e) => {
+    const courseId = e.currentTarget.dataset.courseId;
+    if (!courseId) return;
+    startArchive(Number(courseId));
+});
+
+document.getElementById('archive-modal-close')?.addEventListener('click', () => {
+    document.getElementById('archive-modal')?.classList.add('hidden');
+});
+document.getElementById('archive-done-btn')?.addEventListener('click', () => {
+    document.getElementById('archive-modal')?.classList.add('hidden');
+});
