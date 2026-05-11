@@ -5,6 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { initializeDb, getDb, closeDb } from './db.js';
 import { scrapeCourse, deleteCourse, openLoginBrowser, hasSession, clearSession, fetchAvailableCourses } from './scraper.js';
+import { checkFfmpeg, archiveCourseVideos } from './archive-orchestrator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -717,6 +718,78 @@ app.post('/api/courses/scrape', async (req, res) => {
         res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
     }
     res.end();
+});
+
+// Phase 4b: GET /api/system/ffmpeg — report ffmpeg availability for UI pre-flight
+app.get('/api/system/ffmpeg', async (_req, res) => {
+    try {
+        const r = await checkFfmpeg();
+        res.json(r);
+    } catch (err) {
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
+// Phase 4b: POST /api/courses/:id/archive-videos — SSE stream of archive progress
+// Active jobs tracked so DELETE can abort by courseId.
+const _activeArchiveJobs = new Map(); // courseId -> AbortController
+
+app.post('/api/courses/:id/archive-videos', async (req, res) => {
+    const courseId = Number(req.params.id);
+    if (!Number.isInteger(courseId) || courseId <= 0) {
+        return res.status(400).json({ error: 'Invalid courseId' });
+    }
+    const { force = false } = req.body || {};
+
+    if (_activeArchiveJobs.has(courseId)) {
+        return res.status(409).json({ error: 'An archive job is already running for this course' });
+    }
+
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+    });
+
+    const controller = new AbortController();
+    _activeArchiveJobs.set(courseId, controller);
+
+    // If the client disconnects (closes the browser tab), abort the job.
+    // Use res.on('close') — fires when the response stream closes (actual disconnect),
+    // not req.on('close') which fires when the request body is fully read.
+    res.on('close', () => {
+        if (_activeArchiveJobs.get(courseId) === controller) {
+            controller.abort();
+        }
+    });
+
+    try {
+        const { error } = await archiveCourseVideos(courseId, {
+            force,
+            signal: controller.signal,
+            onProgress: (event) => {
+                res.write(`data: ${JSON.stringify(event)}\n\n`);
+            },
+        });
+        if (error) res.write(`data: ${JSON.stringify({ type: 'error', error })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+    } catch (err) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
+    } finally {
+        _activeArchiveJobs.delete(courseId);
+        res.end();
+    }
+});
+
+// Phase 4b: DELETE /api/courses/:id/archive-videos — abort the active job for this course
+app.delete('/api/courses/:id/archive-videos', (req, res) => {
+    const courseId = Number(req.params.id);
+    const controller = _activeArchiveJobs.get(courseId);
+    if (!controller) {
+        return res.status(404).json({ error: 'No active archive job for this course' });
+    }
+    controller.abort();
+    res.json({ ok: true, courseId });
 });
 
 // GET /api/courses/lectures/:id — Single lecture detail with chunks

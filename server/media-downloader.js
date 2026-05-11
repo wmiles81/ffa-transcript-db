@@ -12,14 +12,15 @@ const NAVIGATE_TIMEOUT_MS = 30_000;
 const FFMPEG_BIN = process.env.FFMPEG_BIN || 'ffmpeg';
 const SCHOOL_URL = process.env.TEACHABLE_SCHOOL_URL || 'https://future-fiction-academy.teachable.com';
 
-export async function downloadLectureVideo(lecture, { onProgress = () => { } } = {}) {
+export async function downloadLectureVideo(lecture, { onProgress = () => { }, force = false } = {}) {
     if (lecture.video_provider !== VIDEO_PROVIDERS.HOTMART) {
         return { skipped: true, reason: `provider ${lecture.video_provider} not handled by this module` };
     }
 
     // Idempotency: if a path is recorded AND the file exists, skip. If the path
     // is recorded but the file is gone, fall through and re-download.
-    if (lecture.video_local_path) {
+    // force=true bypasses this check so the download runs again.
+    if (!force && lecture.video_local_path) {
         try {
             const fullPath = resolveRelative(lecture.video_local_path);
             if (fs.existsSync(fullPath)) {
