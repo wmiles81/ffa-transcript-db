@@ -2382,3 +2382,58 @@ body.splash-active {
   border-color: var(--accent-light);
   color: var(--text-on-accent, #0f1117);
 }
+
+/* Phase 5/6: Inline video player on lecture detail view */
+.lecture-player-wrap {
+  margin: 0 0 1.25rem;
+  width: 100%;
+}
+.lecture-player-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.4rem;
+}
+.lecture-player-tab {
+  padding: 0.4rem 0.85rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  font-family: var(--font-sans);
+}
+.lecture-player-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.lecture-player-tab.active {
+  background: var(--accent-glow);
+  color: var(--accent-light);
+  border-color: var(--accent-primary);
+}
+#lecture-player {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: black;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  display: block;
+}
+.timestamp-link {
+  color: var(--accent-primary);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--accent-glow);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.timestamp-link:hover {
+  background: var(--accent-glow-strong);
+  color: var(--accent-light);
+  text-decoration: none;
+}

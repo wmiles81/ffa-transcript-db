@@ -44,6 +44,15 @@ async function api(endpoint, options = {}) {
     return res.json();
 }
 
+// Phase 5/6: fetch the video list for a course lecture
+async function fetchLectureVideos(lectureId) {
+    try {
+        return await api(`/api/courses/lectures/${lectureId}/videos`);
+    } catch {
+        return [];
+    }
+}
+
 // --- DOM References ---
 const el = {
     statsBar: document.getElementById('stats-bar'),
@@ -325,13 +334,21 @@ async function doSearch(query) {
 
 async function loadTranscriptDetail(id, highlightQuery) {
     try {
+        // Pre-fetch videos for course lectures
+        let videos = [];
+        const isCourseLecture = id && String(id).startsWith('clec-');
+        if (isCourseLecture) {
+            const lectureId = String(id).replace('clec-', '');
+            try { videos = await fetchLectureVideos(lectureId); } catch {}
+        }
+
         // Handle course lecture IDs (clec-<id>)
-        if (typeof id === 'string' && id.startsWith('clec-')) {
-            const lecId = id.replace('clec-', '');
+        if (isCourseLecture) {
+            const lecId = String(id).replace('clec-', '');
             const lecture = await api(`/api/courses/lectures/${lecId}`);
             const sectionPart = lecture.section_title && lecture.section_title !== lecture.title
                 ? `${lecture.section_title} · ` : '';
-            renderTranscriptDetail({
+            const transcript = {
                 id: id,
                 title: lecture.title,
                 filename: `${sectionPart}${lecture.course_title || ''}`,
@@ -341,7 +358,10 @@ async function loadTranscriptDetail(id, highlightQuery) {
                 content: lecture.content || '(No text content)',
                 result_type: 'course',
                 course_id: lecture.course_id,
-            }, highlightQuery);
+                lectureId: lecId,
+                videos,
+            };
+            renderTranscriptDetail(transcript, highlightQuery);
             switchView('detail');
             return;
         }
@@ -1335,10 +1355,20 @@ function renderSearchResults(results) {
 function renderTranscriptDetail(transcript, highlightQuery) {
     let content = escapeHtml(transcript.content);
 
-    // Highlight timestamps
+    // Phase 6: clickable timestamps — supports [HH:MM:SS] and [MM:SS] (and [H:MM:SS])
+    const hasPlayer = transcript.videos && transcript.videos.length > 0;
     content = content.replace(
-        /\[(\d{2}:\d{2}:\d{2})\]/g,
-        '<span class="timestamp">[$1]</span>'
+        /\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]/g,
+        (match, p1, p2, p3) => {
+            const seconds = p3 != null
+                ? Number(p1) * 3600 + Number(p2) * 60 + Number(p3)
+                : Number(p1) * 60 + Number(p2);
+            if (!hasPlayer) {
+                // No video available — keep the legacy span styling
+                return `<span class="timestamp">${match}</span>`;
+            }
+            return `<a class="timestamp-link" data-seconds="${seconds}" href="#" title="Seek to ${match}">${match}</a>`;
+        }
     );
 
     // Highlight speaker names (Name: pattern at start of line or after newline)
@@ -1372,6 +1402,27 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         ? `${Math.round(transcript.duration_minutes)} min`
         : '';
 
+    let playerHtml = '';
+    if (transcript.videos && transcript.videos.length > 0 && transcript.lectureId) {
+        const tabs = transcript.videos.length > 1
+            ? `<div class="lecture-player-tabs">${transcript.videos.map((v, i) =>
+                `<button class="lecture-player-tab${i === 0 ? ' active' : ''}" data-file="${escapeHtml(v.file)}">Video ${i + 1}</button>`
+              ).join('')}</div>`
+            : '';
+        const firstFile = transcript.videos[0].file;
+        playerHtml = `
+        <div class="lecture-player-wrap">
+            ${tabs}
+            <video id="lecture-player"
+                   controls preload="metadata"
+                   data-lecture-id="${escapeHtml(String(transcript.lectureId))}"
+                   data-active-file="${escapeHtml(firstFile)}"
+                   src="/api/courses/lectures/${encodeURIComponent(transcript.lectureId)}/video/${encodeURIComponent(firstFile)}">
+            </video>
+        </div>
+        `;
+    }
+
     el.transcriptDetail.innerHTML = `
     <div class="detail-header">
       <div class="detail-title">${escapeHtml(transcript.lecture)}</div>
@@ -1384,6 +1435,7 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         ${showNotionBtn ? `<button class="set-notion-btn" data-course-id="${transcript.course_id}" data-url="${escapeHtml(notionUrlInContent)}">Set as course Notion URL</button>` : ''}
       </div>
     </div>
+    ${playerHtml}
     <div class="detail-content">${content}</div>
   `;
 
@@ -1403,6 +1455,34 @@ function renderTranscriptDetail(transcript, highlightQuery) {
             } catch (err) {
                 alert('Failed to save: ' + err.message);
             }
+        });
+    }
+
+    // Phase 6: timestamp-link click → seek + play the active video
+    const player = el.transcriptDetail.querySelector('#lecture-player');
+    if (player) {
+        el.transcriptDetail.querySelectorAll('.timestamp-link').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const seconds = Number(link.dataset.seconds);
+                if (!Number.isFinite(seconds)) return;
+                player.currentTime = seconds;
+                player.play().catch(() => { /* autoplay policy may reject — ignore */ });
+            });
+        });
+
+        // Phase 6: tab clicks → switch player src
+        el.transcriptDetail.querySelectorAll('.lecture-player-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const file = tab.dataset.file;
+                if (!file) return;
+                const lectureId = player.dataset.lectureId;
+                player.src = `/api/courses/lectures/${encodeURIComponent(lectureId)}/video/${encodeURIComponent(file)}`;
+                player.dataset.activeFile = file;
+                el.transcriptDetail.querySelectorAll('.lecture-player-tab').forEach(t =>
+                    t.classList.toggle('active', t === tab)
+                );
+            });
         });
     }
 }
