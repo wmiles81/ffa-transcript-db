@@ -23,6 +23,12 @@ const state = {
     courses: [],
     sources: [],
     loggedIn: false,
+    // File-explorer tree
+    tree: { cache: new Map() },
+    expanded: new Set(),
+    activeClassNumber: null,
+    activeLectureId: null,
+    showTranscripts: false,
 };
 
 // --- API Helpers ---
@@ -51,8 +57,12 @@ const el = {
     searchShortcut: document.getElementById('search-shortcut'),
     filterSource: document.getElementById('filter-source'),
     filterTypes: document.getElementById('filter-types'),
-    sourceDropdownSelect: document.getElementById('source-dropdown-select'),
-    lectureListSelect: document.getElementById('lecture-list-select'),
+    sourceTree: document.getElementById('source-tree'),
+    transcriptsToggle: document.getElementById('transcripts-toggle'),
+    transcriptsTree: document.getElementById('transcripts-tree'),
+    // Removed: sourceDropdownSelect, lectureListSelect (elements deleted from HTML)
+    sourceDropdownSelect: null,
+    lectureListSelect: null,
     browseView: document.getElementById('browse-view'),
     searchView: document.getElementById('search-view'),
     detailView: document.getElementById('detail-view'),
@@ -134,10 +144,11 @@ initTheme();
 
 // --- Initialize ---
 async function init() {
-    await Promise.all([loadStats(), loadSources(), loadLectures(), loadTranscripts(), loadAiSettings(), loadCourses(), checkAuth()]);
+    await Promise.all([loadStats(), loadSources(), loadTranscripts(), loadAiSettings(), loadCourses(), checkAuth()]);
     setupEventListeners();
     setupSettingsListeners();
     setupCourseListeners();
+    await initTree();
 }
 
 // --- Load Data ---
@@ -183,6 +194,8 @@ async function loadSources() {
         renderCourseList();
         // Refresh header stats whenever source data changes
         loadStats();
+        // Re-render tree with updated data
+        renderTree();
     } catch (e) {
         console.error('Failed to load sources:', e);
     }
@@ -221,7 +234,10 @@ async function loadTranscripts() {
         if (state.activeSource && state.activeSource.startsWith('course-')) {
             const courseId = state.activeSource.replace('course-', '');
             const params = state.activeSection ? `?section_id=${state.activeSection}` : '';
-            const data = await api(`/api/courses/${courseId}/lectures${params}`);
+            let data = await api(`/api/courses/${courseId}/lectures${params}`);
+            if (state.activeClassNumber) {
+                data = data.filter(lec => String(lec.class_number) === String(state.activeClassNumber));
+            }
             renderTranscriptGrid(data.map(lec => ({
                 id: `clec-${lec.id}`,
                 title: lec.title,
@@ -330,6 +346,406 @@ async function loadTranscriptDetail(id, highlightQuery) {
         switchView('detail');
     } catch (e) {
         console.error('Failed to load transcript:', e);
+    }
+}
+
+// =============================================================================
+// File-explorer tree sidebar
+// =============================================================================
+
+function restoreExpanded() {
+    try {
+        const stored = JSON.parse(localStorage.getItem('tdb-tree-expanded') || '[]');
+        state.expanded = new Set(stored);
+    } catch {
+        state.expanded = new Set();
+    }
+    try {
+        state.showTranscripts = localStorage.getItem('tdb-tree-show-transcripts') === '1';
+    } catch {
+        state.showTranscripts = false;
+    }
+}
+
+function persistExpanded() {
+    try {
+        localStorage.setItem('tdb-tree-expanded', JSON.stringify([...state.expanded]));
+    } catch { /* quota */ }
+}
+
+function persistShowTranscripts() {
+    try {
+        localStorage.setItem('tdb-tree-show-transcripts', state.showTranscripts ? '1' : '0');
+    } catch { /* quota */ }
+}
+
+function buildCourseTreeRoots() {
+    return (state.courses || [])
+        .slice()
+        .sort((a, b) => (a.title || '').localeCompare(b.title || ''))
+        .map(c => ({
+            kind: 'course',
+            id: `course-${c.id}`,
+            rawId: c.id,
+            label: c.title || `Course ${c.id}`,
+            count: c.lecture_count || 0,
+            expandable: true,
+        }));
+}
+
+function buildTranscriptsTreeRoots() {
+    return (state.sources || [])
+        .filter(s => !String(s.id).startsWith('course-'))
+        .slice()
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        .map(s => ({
+            kind: 'source',
+            id: `source-${s.id}`,
+            rawId: s.id,
+            label: s.name || `Source ${s.id}`,
+            count: s.transcript_count || 0,
+            expandable: true,
+        }));
+}
+
+function groupLecturesByClassNumber(lectures) {
+    const groups = new Map();
+    const orphans = [];
+    for (const lec of lectures) {
+        if (lec.class_number) {
+            if (!groups.has(lec.class_number)) groups.set(lec.class_number, []);
+            groups.get(lec.class_number).push(lec);
+        } else {
+            orphans.push(lec);
+        }
+    }
+    const result = [];
+    for (const [cn, lecs] of groups) {
+        const first = lecs[0];
+        const titleStripped = (first.title || '')
+            .replace(/^\d{2,4}\s*[-–]\s*/, '')
+            .replace(/^Class\s+\d+\s*[-–]\s*/i, '')
+            .trim();
+        result.push({
+            kind: 'class',
+            classNumber: cn,
+            label: `${cn} — ${titleStripped || '(no title)'}`,
+            lectures: lecs,
+        });
+    }
+    result.sort((a, b) => Number(a.classNumber) - Number(b.classNumber));
+    for (const orphan of orphans) {
+        result.push({ kind: 'lecture-orphan', lecture: orphan });
+    }
+    return result;
+}
+
+async function ensureCourseTreeLoaded(courseId) {
+    if (state.tree.cache.has(courseId)) return state.tree.cache.get(courseId);
+    try {
+        const sections = await api(`/api/courses/${courseId}/sections?include_lectures=true`);
+        state.tree.cache.set(courseId, sections);
+        return sections;
+    } catch (err) {
+        console.warn('failed to load course tree', courseId, err);
+        return [];
+    }
+}
+
+async function ensureSourceLecturesLoaded(sourceId) {
+    const cacheKey = `source-${sourceId}`;
+    if (state.tree.cache.has(cacheKey)) return state.tree.cache.get(cacheKey);
+    try {
+        const lectures = await api(`/api/lectures?source_id=${encodeURIComponent(sourceId)}`);
+        state.tree.cache.set(cacheKey, lectures);
+        return lectures;
+    } catch (err) {
+        console.warn('failed to load source lectures', sourceId, err);
+        return [];
+    }
+}
+
+function renderTreeNode(node, depth, parentEl) {
+    const wrap = document.createElement('div');
+    wrap.className = 'tree-node-wrap';
+
+    const row = document.createElement('div');
+    row.className = 'tree-node';
+    row.dataset.nodeId = node.id || '';
+    row.dataset.kind = node.kind;
+    row.style.paddingLeft = `${6 + depth * 14}px`;
+
+    const chevron = document.createElement('span');
+    chevron.className = 'tree-chevron';
+    const isLeaf = node.kind === 'lecture' || node.kind === 'lecture-orphan';
+    if (isLeaf) {
+        chevron.classList.add('leaf');
+    } else {
+        chevron.textContent = '▸';
+        const nodeKey = node.id || (node.kind === 'class' ? `class-${node.classNumber}` : null);
+        if (nodeKey && state.expanded.has(nodeKey)) {
+            chevron.classList.add('expanded');
+        }
+    }
+    row.appendChild(chevron);
+
+    const label = document.createElement('span');
+    label.className = 'tree-label';
+    label.textContent = node.label || node.title || '(untitled)';
+    row.appendChild(label);
+
+    if (typeof node.count === 'number' && node.count > 0) {
+        const countEl = document.createElement('span');
+        countEl.className = 'tree-count';
+        countEl.textContent = String(node.count);
+        row.appendChild(countEl);
+    }
+
+    // Active highlight
+    const isActive = (
+        (node.kind === 'course' && state.activeSource === node.id) ||
+        (node.kind === 'source' && state.activeSource === String(node.rawId)) ||
+        (node.kind === 'section' && state.activeSection === node.rawId) ||
+        (node.kind === 'class' && state.activeClassNumber === node.classNumber) ||
+        ((node.kind === 'lecture' || node.kind === 'lecture-orphan') && state.activeLectureId === (node.lecture && node.lecture.id))
+    );
+    if (isActive) row.classList.add('active');
+
+    // Click handlers
+    chevron.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!isLeaf) toggleNode(node);
+    });
+    row.addEventListener('click', () => {
+        selectTreeNode(node);
+    });
+
+    wrap.appendChild(row);
+    parentEl.appendChild(wrap);
+
+    // Render children if expanded
+    const nodeKey = node.id || (node.kind === 'class' ? `class-${node.classNumber}` : null);
+    if (!isLeaf && nodeKey && state.expanded.has(nodeKey)) {
+        const childrenEl = document.createElement('div');
+        childrenEl.className = 'tree-children';
+        wrap.appendChild(childrenEl);
+        renderChildren(node, depth + 1, childrenEl);
+    }
+}
+
+function renderChildren(parentNode, depth, childrenEl) {
+    if (parentNode.kind === 'course') {
+        const sections = state.tree.cache.get(parentNode.rawId) || [];
+        if (sections.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'tree-empty';
+            empty.textContent = '(no sections)';
+            empty.style.paddingLeft = `${6 + depth * 14}px`;
+            childrenEl.appendChild(empty);
+            return;
+        }
+        for (const sec of sections) {
+            const secNode = {
+                kind: 'section',
+                id: `section-${sec.id}`,
+                rawId: sec.id,
+                label: sec.title || '(untitled section)',
+                count: (sec.lectures || []).length,
+                courseId: parentNode.rawId,
+                lectures: sec.lectures || [],
+            };
+            renderTreeNode(secNode, depth, childrenEl);
+        }
+    } else if (parentNode.kind === 'section') {
+        const groups = groupLecturesByClassNumber(parentNode.lectures || []);
+        for (const grp of groups) {
+            if (grp.kind === 'class') {
+                renderTreeNode(grp, depth, childrenEl);
+            } else if (grp.kind === 'lecture-orphan') {
+                renderTreeNode({
+                    kind: 'lecture',
+                    label: grp.lecture.title || '(untitled)',
+                    lecture: grp.lecture,
+                }, depth, childrenEl);
+            }
+        }
+    } else if (parentNode.kind === 'class') {
+        for (const lec of parentNode.lectures || []) {
+            const stripped = (lec.title || '')
+                .replace(new RegExp(`^${parentNode.classNumber}\\s*[-–]\\s*`), '')
+                .trim();
+            renderTreeNode({
+                kind: 'lecture',
+                label: stripped || lec.title || '(untitled)',
+                lecture: lec,
+            }, depth, childrenEl);
+        }
+    } else if (parentNode.kind === 'source') {
+        const lectures = state.tree.cache.get(`source-${parentNode.rawId}`) || [];
+        if (lectures.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'tree-empty';
+            empty.textContent = '(no lectures)';
+            empty.style.paddingLeft = `${6 + depth * 14}px`;
+            childrenEl.appendChild(empty);
+            return;
+        }
+        for (const lec of lectures) {
+            renderTreeNode({
+                kind: 'lecture',
+                label: lec.lecture || lec.title || '(untitled)',
+                lecture: lec,
+            }, depth, childrenEl);
+        }
+    }
+}
+
+function renderTree() {
+    if (!el.sourceTree) return;
+    el.sourceTree.innerHTML = '';
+    const roots = buildCourseTreeRoots();
+    if (roots.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'tree-empty';
+        empty.textContent = '(no courses)';
+        el.sourceTree.appendChild(empty);
+    } else {
+        for (const root of roots) {
+            renderTreeNode(root, 0, el.sourceTree);
+        }
+    }
+    renderTranscriptsTree();
+}
+
+function renderTranscriptsTree() {
+    if (!el.transcriptsTree) return;
+    el.transcriptsTree.innerHTML = '';
+    el.transcriptsTree.classList.toggle('hidden', !state.showTranscripts);
+    if (el.transcriptsToggle) {
+        el.transcriptsToggle.setAttribute('aria-expanded', state.showTranscripts ? 'true' : 'false');
+    }
+    if (!state.showTranscripts) return;
+    const roots = buildTranscriptsTreeRoots();
+    if (roots.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'tree-empty';
+        empty.textContent = '(no other sources)';
+        el.transcriptsTree.appendChild(empty);
+        return;
+    }
+    for (const root of roots) {
+        renderTreeNode(root, 0, el.transcriptsTree);
+    }
+}
+
+async function toggleNode(node) {
+    const key = node.id || (node.kind === 'class' ? `class-${node.classNumber}` : null);
+    if (!key) return;
+    if (state.expanded.has(key)) {
+        state.expanded.delete(key);
+    } else {
+        state.expanded.add(key);
+        // Lazy-load children
+        if (node.kind === 'course') {
+            await ensureCourseTreeLoaded(node.rawId);
+        } else if (node.kind === 'source') {
+            await ensureSourceLecturesLoaded(node.rawId);
+        }
+    }
+    persistExpanded();
+    renderTree();
+}
+
+async function selectTreeNode(node) {
+    if (node.kind === 'course') {
+        state.activeSource = `course-${node.rawId}`;
+        state.activeSection = null;
+        state.activeClassNumber = null;
+        state.activeLectureId = null;
+        if (el.filterSource) el.filterSource.value = state.activeSource;
+        await loadTranscripts();
+    } else if (node.kind === 'section') {
+        state.activeSource = `course-${node.courseId}`;
+        state.activeSection = node.rawId;
+        state.activeClassNumber = null;
+        state.activeLectureId = null;
+        if (el.filterSource) el.filterSource.value = state.activeSource;
+        await loadTranscripts();
+    } else if (node.kind === 'class') {
+        // Find the parent course/section from cache
+        let foundCourseId = null;
+        let foundSectionId = null;
+        for (const [courseId, sections] of state.tree.cache.entries()) {
+            if (typeof courseId !== 'number') continue;
+            for (const sec of sections) {
+                if ((sec.lectures || []).some(l => l.class_number === node.classNumber)) {
+                    foundCourseId = courseId;
+                    foundSectionId = sec.id;
+                    break;
+                }
+            }
+            if (foundCourseId) break;
+        }
+        if (foundCourseId) {
+            state.activeSource = `course-${foundCourseId}`;
+            state.activeSection = foundSectionId;
+            state.activeClassNumber = node.classNumber;
+            state.activeLectureId = null;
+            if (el.filterSource) el.filterSource.value = state.activeSource;
+            await loadTranscripts();
+        }
+    } else if (node.kind === 'lecture' || node.kind === 'lecture-orphan') {
+        const lec = node.lecture;
+        if (lec && lec.id != null) {
+            state.activeLectureId = lec.id;
+            // course_lectures rows have section_id; non-course lectures don't
+            const detailId = lec.section_id != null ? `clec-${lec.id}` : lec.id;
+            loadTranscriptDetail(detailId);
+        }
+    }
+    renderTree();
+}
+
+async function expandToActive() {
+    if (state.activeSource && state.activeSource.startsWith('course-')) {
+        const courseId = Number(state.activeSource.replace('course-', ''));
+        state.expanded.add(`course-${courseId}`);
+        await ensureCourseTreeLoaded(courseId);
+        if (state.activeSection) {
+            state.expanded.add(`section-${state.activeSection}`);
+        }
+        if (state.activeClassNumber) {
+            state.expanded.add(`class-${state.activeClassNumber}`);
+        }
+    } else if (state.activeSource) {
+        state.expanded.add(`source-${state.activeSource}`);
+        state.showTranscripts = true;
+        await ensureSourceLecturesLoaded(state.activeSource);
+    }
+}
+
+async function initTree() {
+    restoreExpanded();
+    // Pre-load any already-expanded course nodes
+    for (const nodeId of state.expanded) {
+        if (nodeId.startsWith('course-')) {
+            const courseId = Number(nodeId.replace('course-', ''));
+            await ensureCourseTreeLoaded(courseId);
+        } else if (nodeId.startsWith('source-')) {
+            const sourceId = nodeId.replace('source-', '');
+            await ensureSourceLecturesLoaded(sourceId);
+        }
+    }
+    await expandToActive();
+    renderTree();
+}
+
+function clearTreeCache(courseId) {
+    if (courseId != null) {
+        state.tree.cache.delete(courseId);
+        state.tree.cache.delete(Number(courseId));
+    } else {
+        state.tree.cache.clear();
     }
 }
 
@@ -781,19 +1197,20 @@ function renderSearchResults(results) {
                 ${r.duration ? `<span class="card-duration">${r.duration}</span>` : ''}
               </div>
             `;
-            card.onclick = () => {
+            card.onclick = async () => {
                 const query = state.searchQuery;
                 state.activeSource = `course-${r.course_id}`;
                 state.activeSection = null;
+                state.activeClassNumber = null;
                 state.activeLecture = '';
                 el.filterSource.value = state.activeSource;
-                if (el.sourceDropdownSelect) el.sourceDropdownSelect.value = state.activeSource;
                 state.searchQuery = '';
                 el.searchInput.value = '';
                 el.searchClear.classList.add('hidden');
-                loadLectures();
                 loadTranscripts();
                 loadTranscriptDetail(`clec-${r.lecture_id}`, query);
+                await expandToActive();
+                renderTree();
             };
         } else {
             const badgeClass = getBadgeClass(r.transcript_type);
@@ -811,19 +1228,20 @@ function renderSearchResults(results) {
                 ${r.lecture_date ? `<span class="card-date">${r.lecture_date}</span>` : ''}
               </div>
             `;
-            card.onclick = () => {
+            card.onclick = async () => {
                 const query = state.searchQuery;
                 state.activeSource = String(r.source_id);
                 state.activeLecture = r.lecture;
                 state.activeSection = null;
+                state.activeClassNumber = null;
                 el.filterSource.value = state.activeSource;
-                if (el.sourceDropdownSelect) el.sourceDropdownSelect.value = state.activeSource;
                 state.searchQuery = '';
                 el.searchInput.value = '';
                 el.searchClear.classList.add('hidden');
-                loadLectures();
                 loadTranscripts();
                 loadTranscriptDetail(r.transcript_id, query);
+                await expandToActive();
+                renderTree();
             };
         }
 
@@ -968,12 +1386,11 @@ function setupEventListeners() {
         }
     });
 
-    // Source filter
+    // Source filter (hidden stub — programmatic changes only; tree drives navigation)
     el.filterSource.addEventListener('change', (e) => {
         state.activeSource = e.target.value;
         state.activeSection = null;
         state.activeLecture = '';
-        loadLectures();
         loadTranscripts();
         if (state.searchQuery) doSearch(state.searchQuery);
     });
@@ -992,6 +1409,15 @@ function setupEventListeners() {
 
     // Back button
     el.backBtn.addEventListener('click', goBack);
+
+    // "Show transcripts" toggle
+    if (el.transcriptsToggle) {
+        el.transcriptsToggle.addEventListener('click', async () => {
+            state.showTranscripts = !state.showTranscripts;
+            persistShowTranscripts();
+            renderTranscriptsTree();
+        });
+    }
 }
 
 function goBack() {
@@ -1046,6 +1472,8 @@ async function loadCourses() {
     try {
         state.courses = await api('/api/courses');
         renderCourseList();
+        clearTreeCache();
+        renderTree();
     } catch (e) { console.error('Failed to load courses:', e); }
 }
 
