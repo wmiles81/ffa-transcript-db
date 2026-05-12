@@ -17,16 +17,23 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
         return { skipped: true, reason: `provider ${lecture.video_provider} not handled by this module` };
     }
 
-    // Idempotency: if a path is recorded AND the file exists, skip. If the path
-    // is recorded but the file is gone, fall through and re-download.
-    // force=true bypasses this check so the download runs again.
-    if (!force && lecture.video_local_path) {
+    // Multi-video idempotency: skip only if we have BOTH a complete recorded path-set
+    // AND every file is actually on disk. A single-path archive (legacy / pre-multi-video)
+    // is treated as INCOMPLETE so the Puppeteer dwell runs and discovers any additional
+    // videos that may live on the same lecture page. The inner per-file skip below
+    // prevents re-downloading files that are already present.
+    if (!force && lecture.video_local_paths) {
         try {
-            const fullPath = resolveRelative(lecture.video_local_path);
-            if (fs.existsSync(fullPath)) {
-                return { skipped: true, reason: 'already archived' };
+            const recorded = JSON.parse(lecture.video_local_paths);
+            if (Array.isArray(recorded) && recorded.length >= 2) {
+                const allExist = recorded.every(p => {
+                    try { return fs.existsSync(resolveRelative(p)); } catch { return false; }
+                });
+                if (allExist) {
+                    return { skipped: true, reason: 'already archived' };
+                }
             }
-        } catch (_) { /* invalid stored path — re-download */ }
+        } catch { /* malformed JSON — fall through and re-check */ }
     }
 
     const lectureUrl = lecture.url.startsWith('http')
