@@ -68,9 +68,6 @@
             <h3 class="sidebar-heading">Sources</h3>
             <button class="sidebar-add-btn" id="add-course-btn" title="Add Teachable course">+</button>
           </div>
-          <select id="source-dropdown-select" class="filter-select" title="Select source">
-            <option value="">All Sources</option>
-          </select>
           <!-- hidden course-list kept for delete functionality -->
           <div id="course-list" class="course-list" style="display:none"></div>
           <button class="auth-btn" id="login-btn">🔐 Log in to Teachable</button>
@@ -109,13 +106,7 @@
 
         <hr class="sidebar-divider" />
 
-        <!-- Existing Source / Type / Lecture Filters -->
-        <div class="sidebar-section">
-          <h3 class="sidebar-heading">Source</h3>
-          <select id="filter-source" class="filter-select" title="Filter by source">
-            <option value="">All Sources</option>
-          </select>
-        </div>
+        <!-- Type filter chips (cross-cut all levels) -->
         <div class="sidebar-section">
           <h3 class="sidebar-heading">Type</h3>
           <div class="filter-chips" id="filter-types">
@@ -126,12 +117,23 @@
             <button class="chip" data-type="Work Session">Work Sessions</button>
           </div>
         </div>
+
+        <hr class="sidebar-divider" />
         <div class="sidebar-section">
-          <h3 class="sidebar-heading">Sessions</h3>
-          <select id="lecture-list-select" class="filter-select" title="Select session">
-            <option value="">All Sessions</option>
-          </select>
+          <h3 class="sidebar-heading">Browse</h3>
+          <div id="source-tree" class="tree-root" role="tree" aria-label="Courses"></div>
         </div>
+        <div class="sidebar-section">
+          <button id="transcripts-toggle" class="transcripts-toggle" type="button" aria-expanded="false" aria-controls="transcripts-tree">
+            <span class="transcripts-toggle-chevron">&#9658;</span>
+            <span class="transcripts-toggle-label">Show transcripts</span>
+          </button>
+          <div id="transcripts-tree" class="tree-root tree-transcripts hidden" role="tree" aria-label="Transcript sources"></div>
+        </div>
+        <!-- Hidden stub: existing search code reads el.filterSource.value -->
+        <select id="filter-source" class="filter-select" style="display:none">
+          <option value="">All Sources</option>
+        </select>
       </aside>
 
       <!-- Content Area -->

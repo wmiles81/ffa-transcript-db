@@ -2095,3 +2095,103 @@ body {
   flex-shrink: 0;
   cursor: pointer;
 }
+
+/* =============================================================================
+   File-explorer tree sidebar
+   ============================================================================= */
+
+.tree-root {
+  font-size: 0.82rem;
+  padding: 0.25rem 0;
+}
+
+.tree-root.hidden { display: none; }
+
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.tree-node:hover {
+  background: var(--bg-hover);
+}
+
+.tree-node.active {
+  background: var(--accent-glow);
+  color: var(--accent-light);
+}
+
+.tree-chevron {
+  display: inline-block;
+  width: 12px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  transition: transform 0.15s ease;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.tree-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.tree-chevron.leaf {
+  visibility: hidden;
+}
+
+.tree-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-count {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.tree-children {
+  /* depth-indent applied inline on .tree-node; no nested margins to preserve width */
+}
+
+.tree-empty {
+  font-style: italic;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  font-size: 0.78rem;
+}
+
+.transcripts-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  padding: 6px 4px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.transcripts-toggle:hover {
+  color: var(--text-primary);
+}
+
+.transcripts-toggle-chevron {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+.transcripts-toggle[aria-expanded="true"] .transcripts-toggle-chevron {
+  transform: rotate(90deg);
+}
