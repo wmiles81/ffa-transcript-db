@@ -2,6 +2,33 @@
 
 Searchable database for Future Fiction Academy content — full-text search across weekly summit transcripts and Teachable course lectures, with optional AI-powered Q&A via OpenRouter.
 
+## Installation (Electron desktop app)
+
+### macOS (Apple Silicon)
+1. Download `FFA Transcript Database-2.1.0-arm64.dmg`
+2. Open the `.dmg` and drag the app to `/Applications`
+3. First launch: right-click the app in `/Applications` → **Open** (Gatekeeper warning is expected — we're signed but not notarized)
+4. Install `ffmpeg`: `brew install ffmpeg`
+
+### Windows (x64)
+1. Download `FFA Transcript Database Setup 2.1.0.exe`
+2. Double-click — Windows SmartScreen will warn "unknown publisher"
+3. Click **More info** → **Run anyway**
+4. Install ffmpeg: `choco install ffmpeg` (or [download from ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH)
+
+### Linux (x64)
+1. Download `FFA Transcript Database-2.1.0.AppImage`
+2. Make executable: `chmod +x "FFA Transcript Database-2.1.0.AppImage"`
+3. Run: `./FFA\ Transcript\ Database-2.1.0.AppImage`
+4. Install ffmpeg: `sudo apt install ffmpeg` (Debian/Ubuntu) or distro equivalent
+
+### Known limitations
+- Notarization not yet done — first-launch warnings on Mac and Windows are expected. macOS only requires right-click → Open once; Windows requires "More info → Run anyway" once.
+- ffmpeg must be installed system-wide on each platform until we bundle it (Phase 4c on the roadmap).
+- Multi-platform Puppeteer Chromium is bundled; courses can be scraped from any platform.
+- Windows build was produced cross-compiled from macOS (electron-builder handles this natively — no Wine required).
+- Unsigned Windows binaries: all `.exe` files inside the NSIS installer will show SmartScreen warnings. Future: purchase an Authenticode certificate (~$200/yr) and set `sign:` in `electron-builder.yml`.
+
 ## Quick Start
 
 **Prerequisites:** [Node.js](https://nodejs.org/) v18+

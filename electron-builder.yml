@@ -41,6 +41,32 @@ mac:
   gatekeeperAssess: false
   notarize: false
 
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  # No code signing in this PR — Apple Developer ID does not work for Windows.
+  # Users will see SmartScreen "unknown publisher" warning on first run.
+  # Future: get an Authenticode cert (~$200/yr) and set 'sign:' here.
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: "FFA Transcript Database"
+
+linux:
+  category: Education
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  # AppImages are sandbox-friendly executables. No signing needed; users mark
+  # the .AppImage executable and double-click.
+
 dmg:
   contents:
     - x: 130
