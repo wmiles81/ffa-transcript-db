@@ -814,16 +814,35 @@ app.get('/api/courses/lectures/:id', (req, res) => {
 // GET /api/courses/:id/sections — List sections for a course with lecture counts
 app.get('/api/courses/:id/sections', (req, res) => {
     const db = getDb();
+    const includeLectures = req.query.include_lectures === 'true' || req.query.include_lectures === '1';
     const sections = db.prepare(`
         SELECT cs.id, cs.title, cs.position,
                COUNT(cl.id) as lecture_count
         FROM course_sections cs
         LEFT JOIN course_lectures cl ON cl.section_id = cs.id
+          AND (cl.removed_at IS NULL OR cl.removed_at = '')
         WHERE cs.course_id = ?
           AND cs.title NOT LIKE '%Check Out the FFA Free Community Classes%'
         GROUP BY cs.id
         ORDER BY cs.position
     `).all(req.params.id);
+    if (includeLectures) {
+        const lecturesByCourse = db.prepare(`
+            SELECT id, section_id, title, class_number, position, duration, video_provider, video_local_path
+            FROM course_lectures
+            WHERE course_id = ?
+              AND (removed_at IS NULL OR removed_at = '')
+            ORDER BY section_id, position
+        `).all(req.params.id);
+        const bySection = new Map();
+        for (const lec of lecturesByCourse) {
+            if (!bySection.has(lec.section_id)) bySection.set(lec.section_id, []);
+            bySection.get(lec.section_id).push(lec);
+        }
+        for (const sec of sections) {
+            sec.lectures = bySection.get(sec.id) || [];
+        }
+    }
     res.json(sections);
 });
 
