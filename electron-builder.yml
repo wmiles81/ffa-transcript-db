@@ -45,6 +45,13 @@ win:
     - target: nsis
       arch:
         - x64
+    # Portable .exe — single self-contained executable, no install ceremony, no
+    # admin rights needed. Use this if the NSIS installer fails silently
+    # (SmartScreen / AV blocking, missing user perms, etc.). The portable
+    # extracts to a temp dir and runs — equivalent to the installed app.
+    - target: portable
+      arch:
+        - x64
   # No code signing in this PR — Apple Developer ID does not work for Windows.
   # Users will see SmartScreen "unknown publisher" warning on first run.
   # Future: get an Authenticode cert (~$200/yr) and set 'sign:' here.
