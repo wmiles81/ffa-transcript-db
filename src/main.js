@@ -151,6 +151,66 @@ function applyTheme(theme) {
 // Apply immediately (before DOM paint)
 initTheme();
 
+// =============================================================================
+// Phase 7: Resizable sidebar
+// =============================================================================
+
+const SIDEBAR_MIN = 220;
+const SIDEBAR_MAX = 600;
+
+function restoreSidebarWidth() {
+    try {
+        const saved = Number(localStorage.getItem('tdb-sidebar-width'));
+        if (Number.isFinite(saved) && saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX) {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar) sidebar.style.width = `${saved}px`;
+        }
+    } catch { /* ignore */ }
+}
+
+function attachSidebarResize() {
+    const handle = document.getElementById('sidebar-resize-handle');
+    const sidebar = document.getElementById('sidebar');
+    if (!handle || !sidebar) return;
+    let startX = 0;
+    let startWidth = 0;
+    let dragging = false;
+
+    function onMouseMove(e) {
+        if (!dragging) return;
+        const delta = e.clientX - startX;
+        let newWidth = startWidth + delta;
+        newWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, newWidth));
+        sidebar.style.width = `${newWidth}px`;
+    }
+
+    function onMouseUp() {
+        if (!dragging) return;
+        dragging = false;
+        document.body.classList.remove('resizing');
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        try {
+            const finalWidth = sidebar.getBoundingClientRect().width;
+            localStorage.setItem('tdb-sidebar-width', String(Math.round(finalWidth)));
+        } catch { /* ignore */ }
+    }
+
+    handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        dragging = true;
+        startX = e.clientX;
+        startWidth = sidebar.getBoundingClientRect().width;
+        document.body.classList.add('resizing');
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    });
+}
+
+// Restore sidebar width before first paint, then wire the drag handle
+restoreSidebarWidth();
+attachSidebarResize();
+
 // --- Initialize ---
 async function init() {
     await Promise.all([loadStats(), loadSources(), loadTranscripts(), loadAiSettings(), loadCourses(), checkAuth()]);
@@ -1402,6 +1462,16 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         ? `${Math.round(transcript.duration_minutes)} min`
         : '';
 
+    // Phase 7: restore saved player height (read before building HTML so it
+    // can be inlined as a style attribute — avoids layout flash)
+    let savedPlayerHeight = null;
+    try {
+        const h = Number(localStorage.getItem('tdb-player-height'));
+        if (Number.isFinite(h) && h >= 200 && h <= window.innerHeight * 0.8) {
+            savedPlayerHeight = h;
+        }
+    } catch { /* ignore */ }
+
     let playerHtml = '';
     if (transcript.videos && transcript.videos.length > 0 && transcript.lectureId) {
         const tabs = transcript.videos.length > 1
@@ -1410,8 +1480,9 @@ function renderTranscriptDetail(transcript, highlightQuery) {
               ).join('')}</div>`
             : '';
         const firstFile = transcript.videos[0].file;
+        const playerStyle = savedPlayerHeight ? ` style="height: ${savedPlayerHeight}px"` : '';
         playerHtml = `
-        <div class="lecture-player-wrap">
+        <div class="lecture-player-wrap"${playerStyle}>
             ${tabs}
             <video id="lecture-player"
                    controls preload="metadata"
@@ -1484,6 +1555,22 @@ function renderTranscriptDetail(transcript, highlightQuery) {
                 );
             });
         });
+    }
+
+    // Phase 7: persist player height on every resize (user dragging the handle)
+    const wrap = el.transcriptDetail.querySelector('.lecture-player-wrap');
+    if (wrap && typeof ResizeObserver !== 'undefined') {
+        let playerSaveTimer = null;
+        const ro = new ResizeObserver(() => {
+            if (playerSaveTimer) clearTimeout(playerSaveTimer);
+            playerSaveTimer = setTimeout(() => {
+                try {
+                    const h = Math.round(wrap.getBoundingClientRect().height);
+                    if (h >= 200) localStorage.setItem('tdb-player-height', String(h));
+                } catch { /* ignore */ }
+            }, 300);
+        });
+        ro.observe(wrap);
     }
 }
 
@@ -1986,7 +2073,19 @@ function setupCourseListeners() {
             el.loginBtn.disabled = true;
             try {
                 const res = await fetch('/api/auth/login', { method: 'POST' });
-                const data = await res.json();
+                const contentType = res.headers.get('content-type') || '';
+                const bodyText = await res.text();
+                let data = {};
+
+                if (bodyText && contentType.includes('application/json')) {
+                    data = JSON.parse(bodyText);
+                }
+
+                if (!res.ok) {
+                    const msg = data.error || bodyText || `Login failed (${res.status})`;
+                    throw new Error(msg);
+                }
+
                 if (data.success) state.loggedIn = true;
             } catch (e) { alert('Login failed: ' + e.message); }
             el.loginBtn.disabled = false;
