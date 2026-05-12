@@ -16,18 +16,12 @@ files:
   - "!**/.{git,vscode,idea}"
   - "!**/{.eslintrc.json,.prettierrc,.gitignore,.npmignore}"
 
-# Bundle Puppeteer's downloaded Chromium (cached at the standard location).
-# This is the runtime browser the scraper uses; without it scrape doesn't work.
-extraResources:
-  - from: "/Users/wmiles49/.cache/puppeteer"
-    to: "puppeteer-cache"
-    filter:
-      - "**/*"
-
 asarUnpack:
   - "node_modules/better-sqlite3-multiple-ciphers/**/*"
   - "node_modules/@ffmpeg-installer/**/*"
 
+# Per-platform extraResources so each build only bundles its own Chromium
+# (avoid shipping linux+win Chromium inside the Mac .dmg, and vice versa).
 mac:
   category: public.app-category.education
   target:
@@ -40,6 +34,11 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   gatekeeperAssess: false
   notarize: false
+  extraResources:
+    - from: "/Users/wmiles49/.cache/puppeteer/chrome"
+      to: "puppeteer-cache/chrome"
+      filter:
+        - "mac_arm-*/**/*"
 
 win:
   target:
@@ -49,6 +48,11 @@ win:
   # No code signing in this PR — Apple Developer ID does not work for Windows.
   # Users will see SmartScreen "unknown publisher" warning on first run.
   # Future: get an Authenticode cert (~$200/yr) and set 'sign:' here.
+  extraResources:
+    - from: "/Users/wmiles49/.cache/puppeteer/chrome"
+      to: "puppeteer-cache/chrome"
+      filter:
+        - "win64-*/**/*"
 
 nsis:
   oneClick: false
@@ -66,6 +70,11 @@ linux:
         - x64
   # AppImages are sandbox-friendly executables. No signing needed; users mark
   # the .AppImage executable and double-click.
+  extraResources:
+    - from: "/Users/wmiles49/.cache/puppeteer/chrome"
+      to: "puppeteer-cache/chrome"
+      filter:
+        - "linux-*/**/*"
 
 dmg:
   contents:
