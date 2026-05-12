@@ -238,82 +238,139 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }, options = 
         const curriculum = await page.evaluate((promoTitlesList) => {
             const promoTitles = new Set(promoTitlesList);
             const sections = [];
-            const sectionElements = document.querySelectorAll(
-                '.course-section, [class*="section"], .row.lecture-sidebar'
-            );
+            const seenLectureIds = new Set();
 
-            // Collect all section titles so we can skip lecture links that duplicate them
-            const sectionTitles = new Set();
-            sectionElements.forEach(sectionEl => {
-                const t = sectionEl.querySelector(
-                    '.section-title, [class*="section-title"], h3, h4'
-                )?.textContent?.trim();
-                if (t) sectionTitles.add(t);
-            });
+            function extractLectureFromLink(link) {
+                const href = link.getAttribute('href');
+                if (!href || !href.includes('/lectures/')) return null;
+                const teachableLectureIdMatch = href.match(/\/lectures\/(\d+)/);
+                if (!teachableLectureIdMatch) return null;
+                const teachableLectureId = teachableLectureIdMatch[1];
+                const text = link.textContent?.trim() || '';
+                const durMatch = text.match(/\((\d+:\d+)\)|\s(\d+:\d+)\s*$/);
+                const title = text.replace(/\(?\d+:\d+\)?/g, '').trim();
+                const cleanTitle = title || text;
+                if (cleanTitle === 'Start' || promoTitles.has(cleanTitle)) return null;
+                const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
+                return {
+                    title: cleanTitle,
+                    url: href,
+                    duration: durMatch ? (durMatch[1] || durMatch[2]) : null,
+                    classNumber: classNumMatch ? classNumMatch[1] : null,
+                    teachableLectureId,
+                };
+            }
 
-            if (sectionElements.length > 0) {
-                sectionElements.forEach(sectionEl => {
-                    const sectionTitle = sectionEl.querySelector(
-                        '.section-title, [class*="section-title"], h3, h4'
-                    )?.textContent?.trim() || '';
-
-                    const lectureLinks = sectionEl.querySelectorAll(
-                        '.section-item a, .lecture-name a, [class*="lecture"] a, li a'
+            // Strategy 1: Teachable course overview page — .slim-section containers.
+            // On the /courses/<id> overview page Teachable renders each real section as a
+            // div.slim-section with an H2 heading and lecture links inside. Each link
+            // appears twice (desktop + mobile rendering), so we deduplicate via seenLectureIds.
+            // This replaces the old [class*="section"] wildcard which also matched
+            // .section-item lecture-row wrappers, turning each lecture into a false section.
+            const slimSections = document.querySelectorAll('.slim-section');
+            if (slimSections.length > 0) {
+                slimSections.forEach(sectionEl => {
+                    const heading = sectionEl.querySelector(
+                        'h2, h3, h4, [class*="heading"], [role="heading"]'
                     );
-
+                    const sectionTitle = heading?.textContent?.trim() || '';
                     const lectures = [];
-                    lectureLinks.forEach(link => {
-                        const href = link.getAttribute('href');
-                        if (href && href.includes('/lectures/')) {
-                            const text = link.textContent?.trim() || '';
-                            const durMatch = text.match(/\((\d+:\d+)\)|\s(\d+:\d+)\s*$/);
-                            const title = text.replace(/\(?\d+:\d+\)?/g, '').trim();
-                            const cleanTitle = title || text;
-                            // Skip Teachable nav artifacts: "Start" CTAs and promos
-                            if (cleanTitle === 'Start' || promoTitles.has(cleanTitle)) return;
-                            const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
-                            const teachableLectureIdMatch = href.match(/\/lectures\/(\d+)/);
-                            if (!teachableLectureIdMatch) return; // defensive; href.includes('/lectures/') already passed
-                            const teachableLectureId = teachableLectureIdMatch[1];
-                            lectures.push({
-                                title: cleanTitle,
-                                url: href,
-                                duration: durMatch ? (durMatch[1] || durMatch[2]) : null,
-                                classNumber: classNumMatch ? classNumMatch[1] : null,
-                                teachableLectureId,
-                            });
+                    const links = sectionEl.querySelectorAll('a[href*="/lectures/"]');
+                    for (const link of links) {
+                        const lec = extractLectureFromLink(link);
+                        if (lec && !seenLectureIds.has(lec.teachableLectureId)) {
+                            lectures.push(lec);
+                            seenLectureIds.add(lec.teachableLectureId);
                         }
-                    });
-
+                    }
                     if (lectures.length > 0 || sectionTitle) {
                         sections.push({ title: sectionTitle, lectures });
                     }
                 });
             }
 
-            // Fallback: grab all lecture links
+            // Strategy 2: Teachable lecture-sidebar page — sibling walk from .section-title.
+            // On /courses/<id>/lectures/<lid> the sidebar renders a flat sequence:
+            // .section-title heading element, then sibling elements with lecture links,
+            // then the next .section-title. We walk forward between headings to group lectures.
+            const sectionsHaveContent = sections.some(s => s.lectures.length > 0);
+            if (!sectionsHaveContent) {
+                sections.length = 0;
+                seenLectureIds.clear();
+                const titleEls = Array.from(document.querySelectorAll('.section-title'));
+                for (let ti = 0; ti < titleEls.length; ti++) {
+                    const titleEl = titleEls[ti];
+                    const nextTitleEl = titleEls[ti + 1] || null;
+                    const sectionTitle = titleEl.textContent?.trim() || '';
+                    const lectures = [];
+
+                    let sibling = titleEl.nextElementSibling;
+                    while (sibling && sibling !== nextTitleEl && !sibling.contains(nextTitleEl)) {
+                        const links = sibling.querySelectorAll('a[href*="/lectures/"]');
+                        for (const link of links) {
+                            const lec = extractLectureFromLink(link);
+                            if (lec && !seenLectureIds.has(lec.teachableLectureId)) {
+                                lectures.push(lec);
+                                seenLectureIds.add(lec.teachableLectureId);
+                            }
+                        }
+                        if (sibling.matches && sibling.matches('a[href*="/lectures/"]')) {
+                            const lec = extractLectureFromLink(sibling);
+                            if (lec && !seenLectureIds.has(lec.teachableLectureId)) {
+                                lectures.push(lec);
+                                seenLectureIds.add(lec.teachableLectureId);
+                            }
+                        }
+                        sibling = sibling.nextElementSibling;
+                    }
+
+                    if (lectures.length > 0 || sectionTitle) {
+                        sections.push({ title: sectionTitle, lectures });
+                    }
+                }
+            }
+
+            // Strategy 3: ancestor traversal — if .section-title headings exist but are
+            // nested inside containers rather than flat siblings, walk up to find the
+            // closest ancestor containing lecture links.
+            const sectionsHaveContent2 = sections.some(s => s.lectures.length > 0);
+            if (!sectionsHaveContent2) {
+                const titleEls2 = document.querySelectorAll('.section-title');
+                if (titleEls2.length > 0) {
+                    sections.length = 0;
+                    seenLectureIds.clear();
+                    titleEls2.forEach(titleEl => {
+                        const sectionTitle = titleEl.textContent?.trim() || '';
+                        let ancestor = titleEl.parentElement;
+                        while (ancestor && ancestor !== document.body) {
+                            if (ancestor.querySelector('a[href*="/lectures/"]')) break;
+                            ancestor = ancestor.parentElement;
+                        }
+                        if (!ancestor || ancestor === document.body) return;
+                        const lectures = [];
+                        const links = ancestor.querySelectorAll('a[href*="/lectures/"]');
+                        for (const link of links) {
+                            const lec = extractLectureFromLink(link);
+                            if (lec && !seenLectureIds.has(lec.teachableLectureId)) {
+                                lectures.push(lec);
+                                seenLectureIds.add(lec.teachableLectureId);
+                            }
+                        }
+                        if (lectures.length > 0 || sectionTitle) {
+                            sections.push({ title: sectionTitle, lectures });
+                        }
+                    });
+                }
+            }
+
+            // Strategy 4 (last resort): grab all lecture links into one section
             if (sections.length === 0 || sections.every(s => s.lectures.length === 0)) {
                 const allLinks = document.querySelectorAll('a[href*="/lectures/"]');
                 const fallbackLectures = [];
                 allLinks.forEach(link => {
-                    const href = link.getAttribute('href');
-                    const text = link.textContent?.trim() || '';
-                    if (href && text && !fallbackLectures.some(l => l.url === href)) {
-                        const durMatch = text.match(/\((\d+:\d+)\)|\s(\d+:\d+)\s*$/);
-                        const title = text.replace(/\(?\d+:\d+\)?/g, '').trim();
-                        const cleanTitle = title || text;
-                        if (cleanTitle === 'Start' || promoTitles.has(cleanTitle)) return;
-                        const classNumMatch = cleanTitle.match(/^(\d{2,4})[\s\-–]/);
-                        const teachableLectureIdMatch = href.match(/\/lectures\/(\d+)/);
-                        if (!teachableLectureIdMatch) return;
-                        const teachableLectureId = teachableLectureIdMatch[1];
-                        fallbackLectures.push({
-                            title: cleanTitle,
-                            url: href,
-                            duration: durMatch ? (durMatch[1] || durMatch[2]) : null,
-                            classNumber: classNumMatch ? classNumMatch[1] : null,
-                            teachableLectureId,
-                        });
+                    const lec = extractLectureFromLink(link);
+                    if (lec && !fallbackLectures.some(l => l.url === lec.url)) {
+                        fallbackLectures.push(lec);
                     }
                 });
                 if (fallbackLectures.length > 0) {
@@ -610,6 +667,24 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }, options = 
         `).run(nowIso, courseId, ...seenIds);
         if (softDeleteResult.changes > 0) {
             onProgress(`  ⓘ Soft-deleted ${softDeleteResult.changes} lectures no longer in Teachable`, null);
+        }
+
+        // Remove any course_sections rows for this course that now have zero active lectures.
+        // This happens when section names change (e.g., the old wrong sections created by the
+        // [class*="section"] wildcard bug) — upsert creates new correctly-named sections but
+        // the old ones linger as orphans. Safe to hard-delete since section rows carry no
+        // user-authored state; all user-meaningful data lives in course_lectures and course_chunks.
+        const orphanSectionResult = db.prepare(`
+            DELETE FROM course_sections
+            WHERE course_id = ?
+              AND id NOT IN (
+                  SELECT DISTINCT section_id
+                  FROM course_lectures
+                  WHERE course_id = ? AND removed_at IS NULL AND section_id IS NOT NULL
+              )
+        `).run(courseId, courseId);
+        if (orphanSectionResult.changes > 0) {
+            onProgress(`  ⓘ Removed ${orphanSectionResult.changes} orphaned section(s) with no active lectures`, null);
         }
 
         const finalCount = db.prepare(
