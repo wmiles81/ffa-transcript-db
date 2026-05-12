@@ -10,6 +10,27 @@ const fs = require('fs');
 
 const isDev = process.env.NODE_ENV === 'development';
 
+// Phase 4d: macOS GUI apps inherit only a minimal PATH ('/usr/bin:/bin:...'),
+// so Homebrew binaries (ffmpeg, etc.) at /opt/homebrew/bin or /usr/local/bin
+// are invisible to spawn(). Prepend common install locations so the
+// archive-videos pre-flight (server/archive-orchestrator.js → checkFfmpeg)
+// can find them. Phase 4c will bundle ffmpeg via @ffmpeg-installer; until
+// then we rely on the user's system installation.
+const EXTRA_PATH = [
+    '/opt/homebrew/bin',     // Apple Silicon Homebrew
+    '/opt/homebrew/sbin',
+    '/usr/local/bin',        // Intel Homebrew, MacPorts, manual installs
+    '/usr/local/sbin',
+    `${process.env.HOME || ''}/.nodenv/shims`,
+    `${process.env.HOME || ''}/.nvm/versions/node`,
+];
+const existingPath = process.env.PATH || '';
+const pathParts = existingPath.split(':').filter(Boolean);
+for (const p of EXTRA_PATH) {
+    if (p && !pathParts.includes(p)) pathParts.unshift(p);
+}
+process.env.PATH = pathParts.join(':');
+
 async function bootServer() {
     const userDataDir = app.getPath('userData');
     const dataDir = path.join(userDataDir, 'data');
