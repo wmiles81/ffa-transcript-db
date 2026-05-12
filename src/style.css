@@ -1854,6 +1854,21 @@ body {
   padding: 0.5rem 0;
 }
 
+/* Tag-grouped sections inside the Add Course picker */
+.course-picker-group {
+  margin-bottom: 0.75rem;
+}
+.course-picker-group-header {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 0.4rem 0.25rem 0.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 0.25rem;
+}
+
 .add-course-actions {
   display: flex;
   align-items: center;

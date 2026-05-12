@@ -1818,13 +1818,44 @@ function setupCourseListeners() {
                         return;
                     }
 
-                    el.coursePickerList.innerHTML = available.map(c => `
-                        <label class="course-picker-item ${c.alreadyScraped ? 'already-scraped' : ''}">
-                            <input type="checkbox" class="picker-check" value="${escapeHtml(c.url)}" 
-                                   data-title="${escapeHtml(c.title)}" />
-                            <span class="picker-title">${escapeHtml(c.title)}</span>
-                            ${c.alreadyScraped ? '<span class="picker-badge">↻ Re-scrape</span>' : ''}
-                        </label>
+                    // Group available courses by tag prefix (same scheme as the Browse tree)
+                    const groups = new Map();
+                    const other = [];
+                    for (const c of available) {
+                        const tag = extractTagFromTitle(c.title);
+                        if (tag) {
+                            if (!groups.has(tag)) groups.set(tag, []);
+                            groups.get(tag).push(c);
+                        } else {
+                            other.push(c);
+                        }
+                    }
+                    const sections = [];
+                    for (const tag of TAG_ORDER) {
+                        const list = groups.get(tag);
+                        if (!list || list.length === 0) continue;
+                        list.sort((a, b) => stripTagPrefix(a.title, tag).localeCompare(stripTagPrefix(b.title, tag)));
+                        sections.push({ label: `${TAG_LABELS[tag] || tag} (${list.length})`, tag, courses: list });
+                    }
+                    if (other.length > 0) {
+                        other.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+                        sections.push({ label: `Other (${other.length})`, tag: 'OTHER', courses: other });
+                    }
+                    el.coursePickerList.innerHTML = sections.map(sec => `
+                        <div class="course-picker-group">
+                            <div class="course-picker-group-header">${escapeHtml(sec.label)}</div>
+                            ${sec.courses.map(c => {
+                                const displayTitle = sec.tag === 'OTHER' ? c.title : (stripTagPrefix(c.title, sec.tag) || c.title);
+                                return `
+                                    <label class="course-picker-item ${c.alreadyScraped ? 'already-scraped' : ''}">
+                                        <input type="checkbox" class="picker-check" value="${escapeHtml(c.url)}"
+                                               data-title="${escapeHtml(c.title)}" />
+                                        <span class="picker-title">${escapeHtml(displayTitle)}</span>
+                                        ${c.alreadyScraped ? '<span class="picker-badge">↻ Re-scrape</span>' : ''}
+                                    </label>
+                                `;
+                            }).join('')}
+                        </div>
                     `).join('');
 
                     // Enable/disable scrape button based on selection
