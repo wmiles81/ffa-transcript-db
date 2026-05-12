@@ -1473,17 +1473,32 @@ function renderTranscriptDetail(transcript, highlightQuery) {
     } catch { /* ignore */ }
 
     let playerHtml = '';
+    let savedPlayerSpeed = 1;
+    try {
+        const s = Number(localStorage.getItem('tdb-player-speed'));
+        if (Number.isFinite(s) && s >= 0.25 && s <= 4) savedPlayerSpeed = s;
+    } catch { /* ignore */ }
+
     if (transcript.videos && transcript.videos.length > 0 && transcript.lectureId) {
         const tabs = transcript.videos.length > 1
-            ? `<div class="lecture-player-tabs">${transcript.videos.map((v, i) =>
+            ? transcript.videos.map((v, i) =>
                 `<button class="lecture-player-tab${i === 0 ? ' active' : ''}" data-file="${escapeHtml(v.file)}">Video ${i + 1}</button>`
-              ).join('')}</div>`
+              ).join('')
             : '';
+        const speedOptions = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+            .map(rate => `<option value="${rate}"${rate === savedPlayerSpeed ? ' selected' : ''}>${rate}×</option>`)
+            .join('');
         const firstFile = transcript.videos[0].file;
         const playerStyle = savedPlayerHeight ? ` style="height: ${savedPlayerHeight}px"` : '';
         playerHtml = `
         <div class="lecture-player-wrap"${playerStyle}>
-            ${tabs}
+            <div class="lecture-player-controls">
+                <div class="lecture-player-tabs">${tabs}</div>
+                <label class="lecture-player-speed-label">
+                    <span class="lecture-player-speed-text">Speed</span>
+                    <select class="lecture-player-speed" aria-label="Playback speed">${speedOptions}</select>
+                </label>
+            </div>
             <video id="lecture-player"
                    controls preload="metadata"
                    data-lecture-id="${escapeHtml(String(transcript.lectureId))}"
@@ -1532,6 +1547,27 @@ function renderTranscriptDetail(transcript, highlightQuery) {
     // Phase 6: timestamp-link click → seek + play the active video
     const player = el.transcriptDetail.querySelector('#lecture-player');
     if (player) {
+        // Apply saved playback rate. `playbackRate` only sticks after metadata is loaded
+        // (the browser may reset it during src changes), so apply both immediately AND
+        // on loadedmetadata/ratechange-defeats. We also re-apply after tab switches.
+        const applyRate = () => {
+            try { player.playbackRate = savedPlayerSpeed; } catch { /* ignore */ }
+        };
+        applyRate();
+        player.addEventListener('loadedmetadata', applyRate);
+
+        // Speed selector
+        const speedSelect = el.transcriptDetail.querySelector('.lecture-player-speed');
+        if (speedSelect) {
+            speedSelect.addEventListener('change', () => {
+                const rate = Number(speedSelect.value);
+                if (!Number.isFinite(rate)) return;
+                savedPlayerSpeed = rate;
+                try { player.playbackRate = rate; } catch { /* ignore */ }
+                try { localStorage.setItem('tdb-player-speed', String(rate)); } catch { /* ignore */ }
+            });
+        }
+
         el.transcriptDetail.querySelectorAll('.timestamp-link').forEach(link => {
             link.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -1539,6 +1575,7 @@ function renderTranscriptDetail(transcript, highlightQuery) {
                 if (!Number.isFinite(seconds)) return;
                 player.currentTime = seconds;
                 player.play().catch(() => { /* autoplay policy may reject — ignore */ });
+                applyRate(); // play() can reset playbackRate on some platforms
             });
         });
 
@@ -1553,6 +1590,7 @@ function renderTranscriptDetail(transcript, highlightQuery) {
                 el.transcriptDetail.querySelectorAll('.lecture-player-tab').forEach(t =>
                     t.classList.toggle('active', t === tab)
                 );
+                applyRate(); // src change resets playbackRate
             });
         });
     }
