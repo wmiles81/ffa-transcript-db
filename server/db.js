@@ -397,6 +397,24 @@ export function initializeDb() {
     ON course_sections(course_id, title)
   `).run();
 
+  // Phase 4d follow-up: support multiple videos per lecture (e.g., Hotmart playlists with N embeds)
+  // Re-read lectureCols after all prior migrations so we see the latest schema.
+  const lectureColsLatest = db.prepare("PRAGMA table_info(course_lectures)").all();
+  if (!lectureColsLatest.some(c => c.name === 'video_local_paths')) {
+    db.prepare('ALTER TABLE course_lectures ADD COLUMN video_local_paths TEXT').run();
+    // Backfill: existing single-video rows get a JSON array with their single path
+    db.prepare(`
+      UPDATE course_lectures
+      SET video_local_paths = json_array(video_local_path)
+      WHERE video_local_path IS NOT NULL
+        AND video_local_paths IS NULL
+    `).run();
+    const backfilled = db.prepare(`SELECT COUNT(*) AS n FROM course_lectures WHERE video_local_paths IS NOT NULL`).get().n;
+    if (backfilled > 0) {
+      console.warn(`[db] Phase 4d migration: backfilled video_local_paths on ${backfilled} rows`);
+    }
+  }
+
   return db;
 }
 

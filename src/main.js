@@ -2046,7 +2046,8 @@ async function startArchive(courseId) {
                             li.textContent = `[${event.index}/${total}] ${event.title} — ${event.detail}`;
                             li.className = 'archive-lecture-row downloading';
                         } else if (event.status === 'done') {
-                            li.textContent = `[${event.index}/${total}] ${event.title} — downloaded`;
+                            const countStr = event.videoCount && event.videoCount > 1 ? ` (${event.videoCount} videos)` : '';
+                            li.textContent = `[${event.index}/${total}] ${event.title} — downloaded${countStr}`;
                             li.className = 'archive-lecture-row done';
                         } else if (event.status === 'skipped') {
                             li.textContent = `[${event.index}/${total}] ${event.title} — ${event.detail}`;

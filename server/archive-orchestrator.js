@@ -91,7 +91,7 @@ export async function archiveCourseVideos(courseId, opts = {}) {
                 });
                 if (result.ok) {
                     tally.downloaded++;
-                    onProgress({ ...baseEvent, status: 'done', sizeBytes: result.sizeBytes, durationSec: result.durationSec });
+                    onProgress({ ...baseEvent, status: 'done', sizeBytes: result.sizeBytes, durationSec: result.durationSec, videoCount: result.videoCount || 1 });
                 } else if (result.skipped) {
                     if (result.reason === 'already archived') tally.alreadyArchived++;
                     else tally.wrongProvider++;

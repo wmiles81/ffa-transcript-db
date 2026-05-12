@@ -61,54 +61,119 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
         return { error: 'No HLS manifest captured within dwell window' };
     }
 
-    const master = manifests[0];
-    const dir = lectureDir(lecture.course_id, lecture.id);
-    const dest = path.join(dir, 'video.mp4');
-    // Atomic rename strategy — crash-safe idempotency: if ffmpeg dies mid-write,
-    // no video.mp4 exists and the next run retries cleanly.
-    const tmpDest = path.join(dir, 'video.mp4.partial');
-
-    if (fs.existsSync(tmpDest)) fs.unlinkSync(tmpDest);
-
-    // ffmpeg replays the headers Hotmart's player set so the CDN accepts the request
-    const headerArg = Object.entries(master.headers)
-        .filter(([k]) => k.toLowerCase() !== 'host' && !k.startsWith(':'))
-        .map(([k, v]) => `${k}: ${v}`)
-        .join('\r\n') + '\r\n';
-
-    onProgress('Downloading via ffmpeg...', 15);
-
-    try {
-        await runFfmpeg([
-            '-y',
-            '-headers', headerArg,
-            '-i', master.url,
-            '-c', 'copy',
-            // Force mp4 output container — the `.partial` extension prevents ffmpeg
-            // from inferring the format from the filename.
-            '-f', 'mp4',
-            tmpDest,
-        ], onProgress);
-    } catch (err) {
-        if (fs.existsSync(tmpDest)) fs.unlinkSync(tmpDest);
-        return { error: 'ffmpeg failed', details: err.message };
+    // Dedupe by URL pathname — different videos have different paths; quality variants
+    // of the same video share the same parent directory path.
+    // Strategy: group by parent directory of the .m3u8 URL and keep only the first
+    // captured URL per parent. For Hotmart, each distinct video lives in a distinct
+    // CDN directory, so one entry per directory = one master playlist per video.
+    const byParent = new Map();
+    for (const m of manifests) {
+        try {
+            const u = new URL(m.url);
+            const fullPath = `${u.origin}${u.pathname}`;
+            const parent = fullPath.substring(0, fullPath.lastIndexOf('/'));
+            if (!byParent.has(parent)) byParent.set(parent, m);
+        } catch {
+            // malformed URL — skip
+        }
     }
 
-    fs.renameSync(tmpDest, dest);
+    const masterList = [...byParent.values()];
+    onProgress(`Found ${masterList.length} video(s) on this lecture page`, 10);
 
-    const durationSec = await probeDuration(dest);
-    const stat = fs.statSync(dest);
+    const dir = lectureDir(lecture.course_id, lecture.id);
+    const downloadedPaths = [];
+    const sizesBytes = [];
+    const durationsSec = [];
 
+    for (let i = 0; i < masterList.length; i++) {
+        const master = masterList[i];
+        // Naming: video.mp4 for the first (back-compat), video_2.mp4, video_3.mp4 for the rest
+        const filename = i === 0 ? 'video.mp4' : `video_${i + 1}.mp4`;
+        const dest = path.join(dir, filename);
+        // Atomic rename strategy — crash-safe idempotency
+        const tmpDest = path.join(dir, `${filename}.partial`);
+
+        // Skip if already exists AND force is not set
+        if (fs.existsSync(dest) && !force) {
+            downloadedPaths.push(relativize(dest));
+            try { sizesBytes.push(fs.statSync(dest).size); } catch { sizesBytes.push(null); }
+            durationsSec.push(null); // re-probe deferred
+            onProgress(`Video ${i + 1}/${masterList.length}: already exists, skipping`, Math.round(15 + (i / masterList.length) * 80));
+            continue;
+        }
+
+        if (fs.existsSync(tmpDest)) fs.unlinkSync(tmpDest);
+
+        // ffmpeg replays the headers Hotmart's player set so the CDN accepts the request
+        const headerArg = Object.entries(master.headers)
+            .filter(([k]) => k.toLowerCase() !== 'host' && !k.startsWith(':'))
+            .map(([k, v]) => `${k}: ${v}`)
+            .join('\r\n') + '\r\n';
+
+        onProgress(`Downloading video ${i + 1}/${masterList.length} via ffmpeg...`, Math.round(15 + (i / masterList.length) * 80));
+
+        try {
+            await runFfmpeg([
+                '-y',
+                '-headers', headerArg,
+                '-i', master.url,
+                '-c', 'copy',
+                // Force mp4 output container — the `.partial` extension prevents ffmpeg
+                // from inferring the format from the filename.
+                '-f', 'mp4',
+                tmpDest,
+            ], onProgress);
+        } catch (err) {
+            if (fs.existsSync(tmpDest)) fs.unlinkSync(tmpDest);
+            // Per-video failure: log but continue with remaining videos
+            onProgress(`Video ${i + 1} failed: ${err.message}`, null);
+            continue;
+        }
+
+        fs.renameSync(tmpDest, dest);
+        downloadedPaths.push(relativize(dest));
+        try { sizesBytes.push(fs.statSync(dest).size); } catch { sizesBytes.push(null); }
+        try {
+            const d = await probeDuration(dest);
+            durationsSec.push(d);
+        } catch {
+            durationsSec.push(null);
+        }
+    }
+
+    if (downloadedPaths.length === 0) {
+        return { error: 'All video downloads failed' };
+    }
+
+    // Aggregate totals
+    const totalSize = sizesBytes.reduce((sum, s) => sum + (s || 0), 0);
+    const totalDuration = durationsSec.reduce((sum, d) => sum + (d || 0), 0);
+    const firstPath = downloadedPaths[0];
+
+    // Persist to DB — update both the legacy single-path column and the new array column
     const db = getDb();
-    db.prepare(
-        'UPDATE course_lectures SET video_local_path = ?, video_duration_sec = ?, video_downloaded_at = ? WHERE id = ?'
-    ).run(relativize(dest), durationSec, new Date().toISOString(), lecture.id);
+    db.prepare(`
+        UPDATE course_lectures
+        SET video_local_path = ?,
+            video_local_paths = ?,
+            video_duration_sec = ?,
+            video_downloaded_at = ?
+        WHERE id = ?
+    `).run(firstPath, JSON.stringify(downloadedPaths), totalDuration || null, new Date().toISOString(), lecture.id);
 
     onProgress(
-        `Downloaded ${(stat.size / 1024 / 1024).toFixed(1)} MB${durationSec ? ` (${durationSec}s of video)` : ''}`,
+        `Downloaded ${downloadedPaths.length} video(s), ${(totalSize / 1024 / 1024).toFixed(1)} MB total${totalDuration ? ` (${totalDuration}s of video)` : ''}`,
         100
     );
-    return { ok: true, path: dest, sizeBytes: stat.size, durationSec };
+    return {
+        ok: true,
+        path: firstPath,                  // legacy single-path field
+        paths: downloadedPaths,            // new array field
+        sizeBytes: totalSize,              // total across all videos
+        durationSec: totalDuration || null,
+        videoCount: downloadedPaths.length,
+    };
 }
 
 function runFfmpeg(args, onProgress) {

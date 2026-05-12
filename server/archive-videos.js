@@ -82,7 +82,8 @@ async function main() {
                 } else if (event.status === 'downloading') {
                     console.log(`  → ${event.detail}`);
                 } else if (event.status === 'done') {
-                    console.log(`  ✓ Downloaded (${formatSize(event.sizeBytes)}, ${formatDuration(event.durationSec)})`);
+                    const countStr = event.videoCount && event.videoCount > 1 ? ` (${event.videoCount} videos)` : '';
+                    console.log(`  ✓ Downloaded${countStr} (${formatSize(event.sizeBytes)}, ${formatDuration(event.durationSec)})`);
                 } else if (event.status === 'skipped') {
                     console.log(`  · Skipped (${event.detail})`);
                 } else if (event.status === 'error') {
