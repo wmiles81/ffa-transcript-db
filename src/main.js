@@ -2180,13 +2180,39 @@ async function saveMediaLibrarySettings(acknowledged = false) {
     }
 }
 
-async function revealMediaLibraryPath() {
+async function pickMediaLibraryFolder() {
     const input = document.getElementById('settings-media-library-path');
-    if (!input || !input.value.trim()) return;
+    if (!input) return;
     try {
-        await fetch(`/api/system/reveal?path=${encodeURIComponent(input.value.trim())}`);
+        const defaultPath = input.value.trim();
+        const url = '/api/system/pick-folder' + (defaultPath ? `?defaultPath=${encodeURIComponent(defaultPath)}` : '');
+        const res = await fetch(url, { method: 'POST' });
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            // Browser-mode fallback: just reveal in Finder
+            if (res.status === 400 && errData.error?.includes('browser mode')) {
+                if (defaultPath) {
+                    await fetch(`/api/system/reveal?path=${encodeURIComponent(defaultPath)}`);
+                } else {
+                    alert('Folder picker is only available in the desktop app. Type the path directly.');
+                }
+                return;
+            }
+            alert(`Folder picker failed: ${errData.error || res.statusText}`);
+            return;
+        }
+        const data = await res.json();
+        if (data.canceled || !data.path) return;
+        input.value = data.path;
+        // Refresh path-info display by calling the backend with the new path (validate without saving)
+        try {
+            const info = await fetch('/api/settings/media-library').then(r => r.json());
+            // The endpoint reports the CURRENT (saved) info, not the new path's info.
+            // Calling save would commit; instead clear the info so user knows to click Save.
+            renderMediaLibraryInfo(null, 'settings-media-library-info');
+        } catch { /* ignore */ }
     } catch (err) {
-        console.warn('reveal failed:', err.message);
+        console.warn('pick-folder failed:', err.message);
     }
 }
 
@@ -2202,7 +2228,7 @@ function attachMediaLibrarySettingsHandlers() {
             renderMediaLibraryInfo(null, 'settings-media-library-info');
         }
     });
-    document.getElementById('settings-media-library-browse')?.addEventListener('click', revealMediaLibraryPath);
+    document.getElementById('settings-media-library-browse')?.addEventListener('click', pickMediaLibraryFolder);
 }
 
 // First-run splash

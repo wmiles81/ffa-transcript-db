@@ -1084,6 +1084,32 @@ app.get('/api/system/reveal', (req, res) => {
     }
 });
 
+// POST /api/system/pick-folder — opens a native folder picker (Electron only)
+// Returns { canceled, path? } on success, 400 if not in Electron.
+app.post('/api/system/pick-folder', async (req, res) => {
+    if (!process.versions.electron) {
+        return res.status(400).json({
+            error: 'Folder picker unavailable in browser mode. Type the path directly into the field.',
+        });
+    }
+    try {
+        const electron = await import('electron');
+        const dialog = electron.dialog;
+        const result = await dialog.showOpenDialog({
+            title: 'Choose Media Library Folder',
+            buttonLabel: 'Use This Folder',
+            properties: ['openDirectory', 'createDirectory'],
+            defaultPath: (req.query && req.query.defaultPath) || undefined,
+        });
+        if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+            return res.json({ canceled: true });
+        }
+        res.json({ canceled: false, path: result.filePaths[0] });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- Serve static files (auto-detect dist/) ---
 const distPath = path.join(__dirname, '..', 'dist');
 if (fs.existsSync(distPath)) {
