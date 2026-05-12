@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { initializeDb, getDb, closeDb } from './db.js';
 import { scrapeCourse, deleteCourse, openLoginBrowser, hasSession, clearSession, fetchAvailableCourses } from './scraper.js';
@@ -386,6 +387,53 @@ function loadSettings() {
 
 function saveSettings(settings) {
     fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+}
+
+// Generic helpers for reading/writing the shared ai-settings.json (used by
+// the Media Library settings endpoints as well as the AI settings above).
+function readSettingsJson() {
+    try {
+        if (!fs.existsSync(SETTINGS_PATH)) return {};
+        return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
+    } catch { return {}; }
+}
+function writeSettingsJson(settings) {
+    const dir = path.dirname(SETTINGS_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+}
+
+async function getPathInfo(pathStr) {
+    const result = { path: pathStr, exists: false, writable: false, freeSpaceBytes: null, usedBytes: 0, videoCount: 0 };
+    try {
+        fs.statSync(pathStr);
+        result.exists = true;
+        try { fs.accessSync(pathStr, fs.constants.W_OK); result.writable = true; } catch { result.writable = false; }
+        // Walk for video.mp4 files and accumulate size
+        const walk = (dir) => {
+            try {
+                const entries = fs.readdirSync(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                    const full = path.join(dir, entry.name);
+                    if (entry.isDirectory()) walk(full);
+                    else if (entry.name === 'video.mp4') {
+                        try {
+                            const s = fs.statSync(full);
+                            result.usedBytes += s.size;
+                            result.videoCount += 1;
+                        } catch { /* skip unreadable file */ }
+                    }
+                }
+            } catch { /* skip unreadable dir */ }
+        };
+        walk(pathStr);
+        // Free space (Node 18.15+ has statfsSync)
+        try {
+            const sf = fs.statfsSync(pathStr);
+            result.freeSpaceBytes = Number(sf.bavail) * Number(sf.bsize);
+        } catch { result.freeSpaceBytes = null; }
+    } catch { /* path doesn't exist or unreadable */ }
+    return result;
 }
 
 // GET /api/ai/settings
@@ -968,6 +1016,71 @@ app.get('/api/course-search', (req, res) => {
         res.json(db.prepare(query).all(...params));
     } catch (err) {
         res.status(400).json({ error: 'Search error', details: err.message });
+    }
+});
+
+// =============================================================================
+// Media Library Settings
+// =============================================================================
+
+// GET /api/settings/media-library
+app.get('/api/settings/media-library', async (_req, res) => {
+    try {
+        const { getMediaLibraryPath, DEFAULT_MEDIA_LIBRARY_PATH } = await import('./media-library.js');
+        const currentPath = getMediaLibraryPath();
+        const settings = readSettingsJson();
+        const ack = settings.media_library_acknowledged === true;
+        const info = await getPathInfo(currentPath);
+        res.json({
+            current_path: currentPath,
+            default_path: DEFAULT_MEDIA_LIBRARY_PATH,
+            acknowledged: ack,
+            info,
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/settings/media-library
+app.post('/api/settings/media-library', async (req, res) => {
+    const { path: newPath, acknowledged } = req.body || {};
+    if (typeof newPath !== 'string' || newPath.trim() === '') {
+        return res.status(400).json({ error: 'path is required and must be a non-empty string' });
+    }
+    try {
+        const trimmed = newPath.trim();
+        const info = await getPathInfo(trimmed);
+        const settings = readSettingsJson();
+        settings.media_library_path = trimmed;
+        if (acknowledged) settings.media_library_acknowledged = true;
+        writeSettingsJson(settings);
+        res.json({ ok: true, current_path: trimmed, info });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/system/reveal?path=... — opens path in OS file manager
+app.get('/api/system/reveal', (req, res) => {
+    const targetPath = req.query.path;
+    if (!targetPath || typeof targetPath !== 'string') {
+        return res.status(400).json({ error: 'path query param required' });
+    }
+    let cmd, args;
+    if (process.platform === 'darwin') {
+        cmd = 'open'; args = [targetPath];
+    } else if (process.platform === 'win32') {
+        cmd = 'explorer'; args = [targetPath];
+    } else {
+        cmd = 'xdg-open'; args = [targetPath];
+    }
+    try {
+        const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+        child.unref();
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 

@@ -260,6 +260,23 @@
           </div>
           <div class="settings-status" id="settings-model-status"></div>
         </div>
+        <hr class="settings-divider" />
+        <div class="settings-section">
+          <h3 class="settings-section-heading">Media Library</h3>
+          <p class="settings-help">Where downloaded videos are stored. This folder can grow very large (multiple gigabytes per course). Choose a location with adequate free space.</p>
+          <div class="settings-row">
+            <label class="settings-label">Path</label>
+            <div class="settings-input-group">
+              <input type="text" id="settings-media-library-path" class="settings-input settings-input-mono" placeholder="/path/to/media/library" />
+              <button type="button" id="settings-media-library-browse" class="settings-btn" title="Open in file manager">&#128193;</button>
+            </div>
+          </div>
+          <div id="settings-media-library-info" class="settings-info"></div>
+          <div class="settings-row">
+            <button type="button" id="settings-media-library-save" class="settings-btn settings-btn-primary">Save</button>
+            <button type="button" id="settings-media-library-reset" class="settings-btn">Use default</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -294,6 +311,25 @@
       <div class="modal-footer">
         <button id="archive-cancel-btn" class="delete-modal-confirm">Cancel</button>
         <button id="archive-done-btn" class="add-course-submit hidden">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- First-run Media Library splash -->
+  <div id="splash-modal" class="splash-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="splash-title">
+    <div class="splash-backdrop"></div>
+    <div class="splash-content">
+      <h2 id="splash-title">Welcome — Configure Media Storage</h2>
+      <p>Before you begin, choose where downloaded videos will be stored.</p>
+      <p class="splash-warning">&#9888; The media library can grow <strong>very large</strong>. A single course of weekly lab sessions can be several gigabytes of video. Make sure the location you choose has plenty of free space.</p>
+      <div class="splash-current">
+        <label>Current path:</label>
+        <code id="splash-current-path">...</code>
+      </div>
+      <div id="splash-info" class="splash-info"></div>
+      <div class="splash-actions">
+        <button type="button" id="splash-customize-btn" class="settings-btn">Customize&#8230;</button>
+        <button type="button" id="splash-accept-btn" class="settings-btn settings-btn-primary">Use default and continue</button>
       </div>
     </div>
   </div>

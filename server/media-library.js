@@ -1,22 +1,51 @@
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 
-const DEFAULT_MEDIA_LIBRARY_PATH =
-    '/Volumes/GMLDAS/Development/Software/General/ffa-transcript-db-media';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export const MEDIA_LIBRARY_PATH = path.resolve(
-    process.env.MEDIA_LIBRARY_PATH && process.env.MEDIA_LIBRARY_PATH.trim()
-        ? process.env.MEDIA_LIBRARY_PATH
-        : DEFAULT_MEDIA_LIBRARY_PATH
+// The default path is a sibling of the repo root (two levels up from server/).
+export const DEFAULT_MEDIA_LIBRARY_PATH = path.resolve(
+    __dirname, '..', '..', 'ffa-transcript-db-media'
 );
 
+// Resolve the settings JSON path — mirrors the SETTINGS_DIR logic in server.js.
+const _settingsDir = process.env.DATA_DIR
+    ? path.resolve(process.env.DATA_DIR)
+    : path.join(__dirname, '..', 'data');
+const _settingsPath = path.join(_settingsDir, 'ai-settings.json');
+
+/**
+ * Returns the currently-configured media library path.
+ * Priority order:
+ *   1. `media_library_path` key in data/ai-settings.json (set via Settings UI)
+ *   2. MEDIA_LIBRARY_PATH environment variable
+ *   3. DEFAULT_MEDIA_LIBRARY_PATH (sibling of repo root)
+ */
+export function getMediaLibraryPath() {
+    try {
+        if (fs.existsSync(_settingsPath)) {
+            const settings = JSON.parse(fs.readFileSync(_settingsPath, 'utf8'));
+            if (settings.media_library_path && String(settings.media_library_path).trim()) {
+                return path.resolve(String(settings.media_library_path).trim());
+            }
+        }
+    } catch { /* fall through */ }
+
+    if (process.env.MEDIA_LIBRARY_PATH && process.env.MEDIA_LIBRARY_PATH.trim()) {
+        return path.resolve(process.env.MEDIA_LIBRARY_PATH.trim());
+    }
+
+    return DEFAULT_MEDIA_LIBRARY_PATH;
+}
+
 export function ensureMediaLibraryExists() {
-    fs.mkdirSync(MEDIA_LIBRARY_PATH, { recursive: true });
+    fs.mkdirSync(getMediaLibraryPath(), { recursive: true });
 }
 
 export function lectureDir(courseId, lectureId) {
     const dir = path.join(
-        MEDIA_LIBRARY_PATH,
+        getMediaLibraryPath(),
         'courses',
         String(courseId),
         'lectures',
@@ -30,7 +59,8 @@ export function relativize(absPath) {
     if (typeof absPath !== 'string' || !path.isAbsolute(absPath)) {
         throw new Error(`relativize: expected absolute path, got: ${absPath}`);
     }
-    const rel = path.relative(MEDIA_LIBRARY_PATH, absPath);
+    const base = getMediaLibraryPath();
+    const rel = path.relative(base, absPath);
     if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
         throw new Error(
             `Path is outside or equal to MEDIA_LIBRARY_PATH: ${absPath}`
@@ -51,10 +81,10 @@ export function resolveRelative(relPath) {
     ) {
         throw new Error(`resolveRelative: invalid relative path: ${relPath}`);
     }
-    return path.join(MEDIA_LIBRARY_PATH, normalized);
+    return path.join(getMediaLibraryPath(), normalized);
 }
 
-// Fail loudly on startup if MEDIA_LIBRARY_PATH points somewhere unwritable.
+// Fail loudly on startup if the media library path points somewhere unwritable.
 // Set MEDIA_LIBRARY_AUTOENSURE=0 to disable the eager call (useful for CLI
 // --help / --dry-run flows on machines where the volume is unmounted).
 if (process.env.MEDIA_LIBRARY_AUTOENSURE !== '0') {

@@ -149,6 +149,10 @@ async function init() {
     setupSettingsListeners();
     setupCourseListeners();
     await initTree();
+    attachMediaLibrarySettingsHandlers();
+    attachSplashHandlers();
+    await loadMediaLibrarySettings();
+    await showFirstRunSplashIfNeeded();
 }
 
 // --- Load Data ---
@@ -993,6 +997,8 @@ function openSettings() {
             el.modelTrigger.textContent = state.selectedModel;
         }
     });
+    // Refresh media library path info
+    loadMediaLibrarySettings();
 }
 
 function closeSettings() {
@@ -2106,3 +2112,135 @@ document.getElementById('archive-modal-close')?.addEventListener('click', () => 
 document.getElementById('archive-done-btn')?.addEventListener('click', () => {
     document.getElementById('archive-modal')?.classList.add('hidden');
 });
+
+// =============================================================================
+// Media Library settings + first-run splash
+// =============================================================================
+
+function formatBytes(bytes) {
+    if (bytes == null) return '?';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    if (bytes < 1024 * 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+    return `${(bytes / 1024 / 1024 / 1024 / 1024).toFixed(2)} TB`;
+}
+
+function renderMediaLibraryInfo(info, targetId) {
+    const el = document.getElementById(targetId);
+    if (!el) return;
+    if (!info) { el.innerHTML = ''; return; }
+    const existsBadge = info.exists
+        ? '<span class="info-pill info-pill-ok">&#10003; exists</span>'
+        : '<span class="info-pill info-pill-error">&#10007; does not exist</span>';
+    const writableBadge = info.exists
+        ? (info.writable
+            ? '<span class="info-pill info-pill-ok">writable</span>'
+            : '<span class="info-pill info-pill-error">not writable</span>')
+        : '';
+    const free = info.freeSpaceBytes != null ? `${formatBytes(info.freeSpaceBytes)} free` : '';
+    const used = info.exists ? `${formatBytes(info.usedBytes)} used · ${info.videoCount} video${info.videoCount === 1 ? '' : 's'}` : '';
+    el.innerHTML = `${existsBadge} ${writableBadge} <span class="info-text">${free}${free && used ? ' · ' : ''}${used}</span>`;
+}
+
+async function loadMediaLibrarySettings() {
+    try {
+        const data = await api('/api/settings/media-library');
+        const input = document.getElementById('settings-media-library-path');
+        if (input) input.value = data.current_path || '';
+        renderMediaLibraryInfo(data.info, 'settings-media-library-info');
+        return data;
+    } catch (err) {
+        console.warn('failed to load media library settings:', err.message);
+        return null;
+    }
+}
+
+async function saveMediaLibrarySettings(acknowledged = false) {
+    const input = document.getElementById('settings-media-library-path');
+    if (!input) return;
+    const newPath = input.value.trim();
+    if (!newPath) { alert('Path is required'); return; }
+    try {
+        const res = await fetch('/api/settings/media-library', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: newPath, acknowledged }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(`Failed to save: ${err.error || res.statusText}`);
+            return;
+        }
+        const data = await res.json();
+        renderMediaLibraryInfo(data.info, 'settings-media-library-info');
+        return data;
+    } catch (err) {
+        alert(`Failed to save: ${err.message}`);
+    }
+}
+
+async function revealMediaLibraryPath() {
+    const input = document.getElementById('settings-media-library-path');
+    if (!input || !input.value.trim()) return;
+    try {
+        await fetch(`/api/system/reveal?path=${encodeURIComponent(input.value.trim())}`);
+    } catch (err) {
+        console.warn('reveal failed:', err.message);
+    }
+}
+
+function attachMediaLibrarySettingsHandlers() {
+    document.getElementById('settings-media-library-save')?.addEventListener('click', async () => {
+        await saveMediaLibrarySettings(true);
+    });
+    document.getElementById('settings-media-library-reset')?.addEventListener('click', async () => {
+        const data = await api('/api/settings/media-library');
+        const input = document.getElementById('settings-media-library-path');
+        if (input && data?.default_path) {
+            input.value = data.default_path;
+            renderMediaLibraryInfo(null, 'settings-media-library-info');
+        }
+    });
+    document.getElementById('settings-media-library-browse')?.addEventListener('click', revealMediaLibraryPath);
+}
+
+// First-run splash
+async function showFirstRunSplashIfNeeded() {
+    try {
+        const data = await api('/api/settings/media-library');
+        if (data?.acknowledged) return;
+        const modal = document.getElementById('splash-modal');
+        const currentPathEl = document.getElementById('splash-current-path');
+        if (currentPathEl) currentPathEl.textContent = data?.current_path || '';
+        renderMediaLibraryInfo(data?.info, 'splash-info');
+        modal?.classList.remove('hidden');
+        document.body.classList.add('splash-active');
+    } catch (err) {
+        console.warn('splash check failed:', err.message);
+    }
+}
+
+function attachSplashHandlers() {
+    document.getElementById('splash-accept-btn')?.addEventListener('click', async () => {
+        try {
+            const data = await api('/api/settings/media-library');
+            const res = await fetch('/api/settings/media-library', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: data.current_path, acknowledged: true }),
+            });
+            if (res.ok) {
+                document.getElementById('splash-modal')?.classList.add('hidden');
+                document.body.classList.remove('splash-active');
+            }
+        } catch (err) {
+            console.warn('splash accept failed:', err.message);
+        }
+    });
+    document.getElementById('splash-customize-btn')?.addEventListener('click', () => {
+        document.getElementById('splash-modal')?.classList.add('hidden');
+        document.body.classList.remove('splash-active');
+        document.getElementById('settings-btn')?.click();
+    });
+}

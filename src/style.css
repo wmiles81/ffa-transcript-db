@@ -2210,3 +2210,175 @@ body {
 .transcripts-toggle[aria-expanded="true"] .transcripts-toggle-chevron {
   transform: rotate(90deg);
 }
+
+/* =============================================================================
+   Splash overlay (first-run media library acknowledgement)
+   ============================================================================= */
+
+.splash-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.splash-overlay.hidden {
+  display: none;
+}
+
+.splash-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.splash-content {
+  position: relative;
+  max-width: 560px;
+  width: 90vw;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md, 8px);
+  padding: 2rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.splash-content h2 {
+  margin: 0 0 1rem;
+  color: var(--accent-light);
+  font-size: 1.1rem;
+}
+
+.splash-content p {
+  margin: 0.5rem 0;
+  color: var(--text-primary);
+  line-height: 1.5;
+  font-size: 0.9rem;
+}
+
+.splash-warning {
+  background: rgba(255, 193, 7, 0.1);
+  border-left: 3px solid #ffc107;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  margin: 1rem 0 !important;
+}
+
+.splash-current {
+  margin: 1rem 0;
+  padding: 0.75rem;
+  background: var(--bg-surface);
+  border-radius: 4px;
+}
+
+.splash-current label {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.3rem;
+}
+
+.splash-current code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.82rem;
+  color: var(--accent-light);
+  word-break: break-all;
+}
+
+.splash-info {
+  margin: 0.75rem 0;
+  min-height: 1.5rem;
+}
+
+.splash-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+
+body.splash-active {
+  overflow: hidden;
+}
+
+/* =============================================================================
+   Settings — Media Library section additions
+   ============================================================================= */
+
+.settings-section-heading {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 0.4rem;
+}
+
+.settings-help {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0 0 0.9rem;
+  line-height: 1.5;
+}
+
+.settings-divider {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 1.25rem 0;
+}
+
+.settings-input-group {
+  display: flex;
+  flex: 1;
+  gap: 0.25rem;
+}
+
+/* Mono variant for path inputs */
+.settings-input-mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.82rem;
+}
+
+.settings-info {
+  font-size: 0.78rem;
+  padding: 0.3rem 0;
+  min-height: 1.4rem;
+}
+
+.info-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.7rem;
+  margin-right: 0.35rem;
+}
+
+.info-pill-ok {
+  background: rgba(76, 175, 80, 0.15);
+  color: #81c784;
+}
+
+.info-pill-error {
+  background: rgba(244, 67, 54, 0.15);
+  color: #e57373;
+}
+
+.info-text {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+/* Primary-style variant for settings buttons */
+.settings-btn-primary {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--text-on-accent, #0f1117);
+  font-weight: 600;
+}
+
+.settings-btn-primary:hover {
+  background: var(--accent-light);
+  border-color: var(--accent-light);
+  color: var(--text-on-accent, #0f1117);
+}
