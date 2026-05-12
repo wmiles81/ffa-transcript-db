@@ -445,7 +445,7 @@ body {
   color: var(--accent-light);
 }
 
-/* --- Lecture List --- */
+/* --- Lecture List (Phase 4b-ui: replaced by #lecture-list-select <select>; styles retained for reference) --- */
 .lecture-list {
   display: flex;
   flex-direction: column;

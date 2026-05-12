@@ -68,21 +68,11 @@
             <h3 class="sidebar-heading">Sources</h3>
             <button class="sidebar-add-btn" id="add-course-btn" title="Add Teachable course">+</button>
           </div>
-          <div class="source-dropdown" id="source-dropdown">
-            <button class="source-dropdown-trigger" id="source-dropdown-trigger">
-              <span id="source-dropdown-label">No sources</span>
-              <span class="source-dropdown-chevron">▾</span>
-            </button>
-            <div class="source-dropdown-panel hidden" id="source-dropdown-panel">
-              <div id="course-list" class="course-list"></div>
-              <button class="course-delete-btn hidden" id="delete-selected-courses">🗑 Delete Selected</button>
-              <div class="delete-confirm-bar hidden" id="delete-confirm-bar">
-                <span id="delete-confirm-msg">Really delete?</span>
-                <button class="confirm-yes-btn" id="delete-confirm-yes">Yes, delete</button>
-                <button class="confirm-no-btn" id="delete-confirm-no">Cancel</button>
-              </div>
-            </div>
-          </div>
+          <select id="source-dropdown-select" class="filter-select" title="Select source">
+            <option value="">All Sources</option>
+          </select>
+          <!-- hidden course-list kept for delete functionality -->
+          <div id="course-list" class="course-list" style="display:none"></div>
           <button class="auth-btn" id="login-btn">🔐 Log in to Teachable</button>
         </div>
 
@@ -138,9 +128,9 @@
         </div>
         <div class="sidebar-section">
           <h3 class="sidebar-heading">Sessions</h3>
-          <div class="lecture-list" id="lecture-list">
-            <!-- Populated dynamically -->
-          </div>
+          <select id="lecture-list-select" class="filter-select" title="Select session">
+            <option value="">All Sessions</option>
+          </select>
         </div>
       </aside>
 

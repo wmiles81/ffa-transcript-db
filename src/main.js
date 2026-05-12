@@ -51,7 +51,8 @@ const el = {
     searchShortcut: document.getElementById('search-shortcut'),
     filterSource: document.getElementById('filter-source'),
     filterTypes: document.getElementById('filter-types'),
-    lectureList: document.getElementById('lecture-list'),
+    sourceDropdownSelect: document.getElementById('source-dropdown-select'),
+    lectureListSelect: document.getElementById('lecture-list-select'),
     browseView: document.getElementById('browse-view'),
     searchView: document.getElementById('search-view'),
     detailView: document.getElementById('detail-view'),
@@ -85,15 +86,6 @@ const el = {
     // Course management
     authStatus: document.getElementById('auth-status'),
     courseList: document.getElementById('course-list'),
-    deleteSelectedCourses: document.getElementById('delete-selected-courses'),
-    deleteConfirmBar: document.getElementById('delete-confirm-bar'),
-    deleteConfirmMsg: document.getElementById('delete-confirm-msg'),
-    deleteConfirmYes: document.getElementById('delete-confirm-yes'),
-    deleteConfirmNo: document.getElementById('delete-confirm-no'),
-    sourceDropdown: document.getElementById('source-dropdown'),
-    sourceDropdownTrigger: document.getElementById('source-dropdown-trigger'),
-    sourceDropdownPanel: document.getElementById('source-dropdown-panel'),
-    sourceDropdownLabel: document.getElementById('source-dropdown-label'),
     addCourseBtn: document.getElementById('add-course-btn'),
     loginBtn: document.getElementById('login-btn'),
     addCoursePanel: document.getElementById('add-course-panel'),
@@ -687,51 +679,27 @@ function updateNotionBar(courseId) {
 
 // --- Render Functions ---
 function renderLectureList(lectures) {
-    el.lectureList.innerHTML = '';
+    if (!el.lectureListSelect) return;
     const isCourse = state.activeSource?.startsWith('course-');
 
-    const allItem = document.createElement('div');
-    allItem.className = `lecture-item ${(!state.activeLecture && !state.activeSection) ? 'active' : ''}`;
-    allItem.innerHTML = `<span class="lecture-name">${isCourse ? 'All Sections' : 'All Lectures'}</span>`;
-    allItem.onclick = () => {
-        state.activeLecture = '';
-        state.activeSection = null;
-        if (isCourse) {
-            el.lectureList.querySelectorAll('.lecture-item').forEach(i => i.classList.remove('active'));
-            allItem.classList.add('active');
-        } else {
-            loadLectures();
-        }
-        loadTranscripts();
-        if (state.searchQuery) doSearch(state.searchQuery);
-    };
-    el.lectureList.appendChild(allItem);
-
+    // Build options: "All" entry + one per lecture/section
+    let html = `<option value="">${isCourse ? 'All Sections' : 'All Sessions'}</option>`;
     for (const lecture of lectures) {
-        const item = document.createElement('div');
-        const isActive = isCourse
-            ? state.activeSection === lecture.sectionId
-            : state.activeLecture === lecture.lecture;
-        item.className = `lecture-item ${isActive ? 'active' : ''}`;
-        const datePart = lecture.lecture_date || '';
-        const nameParts = lecture.lecture.replace(/\(\d+:\d+\)/, '').trim();
-        item.innerHTML = `
-      ${datePart ? `<span class="lecture-date">${datePart}</span>` : ''}
-      <span class="lecture-name">${escapeHtml(nameParts)}</span>
-    `;
-        item.onclick = () => {
-            if (isCourse) {
-                state.activeSection = lecture.sectionId;
-                el.lectureList.querySelectorAll('.lecture-item').forEach(i => i.classList.remove('active'));
-                item.classList.add('active');
-            } else {
-                state.activeLecture = lecture.lecture;
-                loadLectures();
-            }
-            loadTranscripts();
-            if (state.searchQuery) doSearch(state.searchQuery);
-        };
-        el.lectureList.appendChild(item);
+        const namePart = lecture.lecture ? lecture.lecture.replace(/\(\d+:\d+\)/, '').trim() : '';
+        const datePart = lecture.lecture_date ? ` (${lecture.lecture_date})` : '';
+        // For courses we store sectionId as the value; for transcripts we store the lecture name
+        const value = isCourse ? String(lecture.sectionId) : lecture.lecture;
+        html += `<option value="${escapeHtml(value)}">${escapeHtml(namePart)}${escapeHtml(datePart)}</option>`;
+    }
+    el.lectureListSelect.innerHTML = html;
+
+    // Reflect current active state
+    if (isCourse && state.activeSection != null) {
+        el.lectureListSelect.value = String(state.activeSection);
+    } else if (!isCourse && state.activeLecture) {
+        el.lectureListSelect.value = state.activeLecture;
+    } else {
+        el.lectureListSelect.value = '';
     }
 }
 
@@ -819,6 +787,7 @@ function renderSearchResults(results) {
                 state.activeSection = null;
                 state.activeLecture = '';
                 el.filterSource.value = state.activeSource;
+                if (el.sourceDropdownSelect) el.sourceDropdownSelect.value = state.activeSource;
                 state.searchQuery = '';
                 el.searchInput.value = '';
                 el.searchClear.classList.add('hidden');
@@ -848,6 +817,7 @@ function renderSearchResults(results) {
                 state.activeLecture = r.lecture;
                 state.activeSection = null;
                 el.filterSource.value = state.activeSource;
+                if (el.sourceDropdownSelect) el.sourceDropdownSelect.value = state.activeSource;
                 state.searchQuery = '';
                 el.searchInput.value = '';
                 el.searchClear.classList.add('hidden');
@@ -1100,7 +1070,6 @@ function updateAuthUI() {
 
 function renderCourseList() {
     if (!el.courseList) return;
-    if (el.deleteSelectedCourses) el.deleteSelectedCourses.classList.add('hidden');
 
     const allItems = [];
 
@@ -1112,6 +1081,7 @@ function renderCourseList() {
             title: s.name,
             meta: `${s.transcript_count || 0} transcripts`,
             sourceId: s.id,
+            selectValue: String(s.id),
         });
     }
 
@@ -1124,20 +1094,28 @@ function renderCourseList() {
             title: `${prefix}${c.title}`,
             meta: `${c.lecture_count || 0}L · ${c.chunk_count || 0}C`,
             courseId: c.id,
+            selectValue: `course-${c.id}`,
         });
+    }
+
+    // Populate the source-dropdown-select (native <select>)
+    if (el.sourceDropdownSelect) {
+        let optHtml = '<option value="">All Sources</option>';
+        for (const item of allItems) {
+            const label = `${escapeHtml(item.title)} — ${item.meta}`;
+            optHtml += `<option value="${escapeHtml(item.selectValue)}">${label}</option>`;
+        }
+        el.sourceDropdownSelect.innerHTML = optHtml;
+        // Reflect current active state
+        el.sourceDropdownSelect.value = state.activeSource || '';
     }
 
     if (allItems.length === 0) {
         el.courseList.innerHTML = '<div class="course-empty-msg">No sources yet</div>';
-        if (el.sourceDropdownLabel) el.sourceDropdownLabel.textContent = 'No sources';
         return;
     }
 
-    // Update dropdown trigger label
-    if (el.sourceDropdownLabel) {
-        el.sourceDropdownLabel.textContent = `${allItems.length} source${allItems.length !== 1 ? 's' : ''}`;
-    }
-
+    // Keep hidden course-list populated for multi-delete support
     el.courseList.innerHTML = allItems.map(item => `
         <label class="course-checklist-item" data-type="${item.type}" data-id="${item.id}">
             <input type="checkbox" class="course-check" value="${item.id}" />
@@ -1145,45 +1123,6 @@ function renderCourseList() {
             <span class="course-checklist-meta">${item.meta}</span>
         </label>
     `).join('');
-
-    // Toggle delete button visibility on check change
-    el.courseList.querySelectorAll('.course-check').forEach(cb => {
-        cb.addEventListener('change', () => {
-            const anyChecked = el.courseList.querySelector('.course-check:checked');
-            if (el.deleteSelectedCourses) {
-                el.deleteSelectedCourses.classList.toggle('hidden', !anyChecked);
-            }
-        });
-    });
-
-    // Click on title loads the source/course
-    el.courseList.querySelectorAll('.course-checklist-title').forEach(span => {
-        span.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const label = span.closest('.course-checklist-item');
-            const type = label.dataset.type;
-            const id = label.dataset.id;
-            if (type === 'course') {
-                const courseId = Number(id.replace('crs-', ''));
-                state.activeSource = `course-${courseId}`;
-                state.activeSection = null;
-                state.activeLecture = '';
-                el.filterSource.value = `course-${courseId}`;
-                loadLectures();
-                loadTranscripts();
-            } else if (type === 'source') {
-                const sourceId = id.replace('src-', '');
-                state.activeSource = sourceId;
-                el.filterSource.value = sourceId;
-                el.filterSource.dispatchEvent(new Event('change'));
-            }
-            // Close dropdown after selection
-            if (el.sourceDropdownPanel) el.sourceDropdownPanel.classList.add('hidden');
-            if (el.sourceDropdown) el.sourceDropdown.classList.remove('open');
-        });
-    });
-
 }
 
 // Delete selected sources/courses handler
@@ -1216,8 +1155,8 @@ function showDeleteModal(message) {
     });
 }
 
-if (el.deleteSelectedCourses) {
-    el.deleteSelectedCourses.addEventListener('click', async (e) => {
+if (false /* deleteSelectedCourses UI removed — multi-delete is a follow-up feature */) {
+    (async (e) => {
         e.stopPropagation();
         e.preventDefault();
         const checked = [...el.courseList.querySelectorAll('.course-check:checked')];
@@ -1236,9 +1175,7 @@ if (el.deleteSelectedCourses) {
             }
         });
 
-        // Close dropdown
-        el.sourceDropdown.classList.remove('open');
-        if (el.sourceDropdownPanel) el.sourceDropdownPanel.classList.add('hidden');
+        // (dropdown close no longer needed)
 
         // Show modal
         const msg = `Delete ${items.length} item(s)?\n\n${items.map(i => `  \u2022 ${i.title}`).join('\n')}\n\nThis removes all associated data.`;
@@ -1257,7 +1194,7 @@ if (el.deleteSelectedCourses) {
             await loadStats();
             await loadSources();
         } catch (err) { alert('Failed to delete items'); }
-    });
+    })();
 }
 
 function getSelectedCourseIds() {
@@ -1265,21 +1202,35 @@ function getSelectedCourseIds() {
     return [...el.courseList.querySelectorAll('.course-check:checked')].map(cb => Number(cb.value));
 }
 
-// Source dropdown toggle
-if (el.sourceDropdownTrigger) {
-    el.sourceDropdownTrigger.addEventListener('click', () => {
-        const isOpen = el.sourceDropdown.classList.toggle('open');
-        el.sourceDropdownPanel.classList.toggle('hidden', !isOpen);
+// Phase 4b-ui: Source dropdown-select change handler
+if (el.sourceDropdownSelect) {
+    el.sourceDropdownSelect.addEventListener('change', (e) => {
+        state.activeSource = e.target.value;
+        state.activeSection = null;
+        state.activeLecture = '';
+        // Keep the existing filter-source select in sync (used by doSearch)
+        if (el.filterSource) el.filterSource.value = state.activeSource;
+        loadLectures();
+        loadTranscripts();
+        if (state.searchQuery) doSearch(state.searchQuery);
     });
 }
 
-// Close dropdown when clicking outside
-document.addEventListener('click', (e) => {
-    if (el.sourceDropdown && !el.sourceDropdown.contains(e.target)) {
-        el.sourceDropdown.classList.remove('open');
-        if (el.sourceDropdownPanel) el.sourceDropdownPanel.classList.add('hidden');
-    }
-});
+// Phase 4b-ui: Sessions dropdown-select change handler
+if (el.lectureListSelect) {
+    el.lectureListSelect.addEventListener('change', (e) => {
+        const val = e.target.value;
+        const isCourse = state.activeSource?.startsWith('course-');
+        if (isCourse) {
+            state.activeSection = val ? Number(val) : null;
+        } else {
+            state.activeLecture = val;
+            if (!val) loadLectures();
+        }
+        loadTranscripts();
+        if (state.searchQuery) doSearch(state.searchQuery);
+    });
+}
 
 async function startScrape(url, { hideOnDone = true } = {}) {
     if (!state.loggedIn) {
