@@ -1,0 +1,56 @@
+appId: com.gunnmilesllc.ffa-transcript-db
+productName: FFA Transcript Database
+copyright: Copyright © 2026 Gunn Miles LLC
+
+directories:
+  buildResources: build
+  output: _dist
+
+files:
+  - dist/**/*
+  - server/**/*
+  - electron/**/*
+  - package.json
+  - "!**/node_modules/*/{CHANGELOG.md,README.md,readme.md,LICENSE,license,*.test.js,*.spec.js,test/**}"
+  - "!**/node_modules/.cache"
+  - "!**/.{git,vscode,idea}"
+  - "!**/{.eslintrc.json,.prettierrc,.gitignore,.npmignore}"
+
+# Bundle Puppeteer's downloaded Chromium (cached at the standard location).
+# This is the runtime browser the scraper uses; without it scrape doesn't work.
+extraResources:
+  - from: "/Users/wmiles49/.cache/puppeteer"
+    to: "puppeteer-cache"
+    filter:
+      - "**/*"
+
+asarUnpack:
+  - "node_modules/better-sqlite3-multiple-ciphers/**/*"
+  - "node_modules/@ffmpeg-installer/**/*"
+
+mac:
+  category: public.app-category.education
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  identity: "WILLIAM MILES (76R466YDPC)"
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  gatekeeperAssess: false
+  notarize: false
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+  window:
+    width: 540
+    height: 380
+
+publish: null

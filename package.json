@@ -14,7 +14,9 @@
         "dev:server": "node server/server.js",
         "dev:client": "npx vite",
         "start:electron": "electron electron/main.cjs",
-        "dev:electron": "NODE_ENV=development electron electron/main.cjs"
+        "dev:electron": "NODE_ENV=development electron electron/main.cjs",
+        "dist:electron:mac": "npm run build && electron-builder --mac --arm64",
+        "dist:electron": "npm run build && electron-builder"
     },
     "dependencies": {
         "better-sqlite3-multiple-ciphers": "^12.9.0",
@@ -24,6 +26,7 @@
     },
     "devDependencies": {
         "electron": "^32.3.3",
+        "electron-builder": "^25.1.8",
         "vite": "^6.0.0"
     }
 }
