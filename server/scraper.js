@@ -134,7 +134,7 @@ export async function fetchAvailableCourses() {
         let hasMore = true;
 
         while (hasMore) {
-            const url = `${SCHOOL_URL}/l/products?sortKey=recommended&sortDirection=desc&page=${pageNum}`;
+            const url = `${SCHOOL_URL}/l/products?sortKey=name&sortDirection=asc&page=${pageNum}`;
             await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
             if (page.url().includes('/sign_in') || page.url().includes('/login')) {
