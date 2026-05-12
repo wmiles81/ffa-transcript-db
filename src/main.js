@@ -379,18 +379,68 @@ function persistShowTranscripts() {
     } catch { /* quota */ }
 }
 
+const TAG_ORDER = ['CUT', 'INK', 'LAN', 'LED', 'MID'];
+const TAG_LABELS = {
+    CUT: '✂️ CUT',
+    INK: '💻 INK',
+    LAN: '💡 LAN',
+    LED: '📗 LED',
+    MID: '🌑 MID',
+};
+
+function extractTagFromTitle(title) {
+    // Match a known tag optionally preceded by emoji/non-letter chars, followed by ':'
+    // Handles: "✂️ CUT: ...", "💡LAN: ..." (no space), "💻 INK: ...", plain titles
+    const m = (title || '').match(/(?:^|[^\p{L}])(CUT|INK|LAN|LED|MID)\s*:/u);
+    return m ? m[1] : null;
+}
+
+function stripTagPrefix(title, tag) {
+    // Strip everything up to and including "<TAG>:" plus trailing whitespace
+    if (!tag) return title || '';
+    const re = new RegExp(`^.*?\\b${tag}\\s*:\\s*`);
+    return (title || '').replace(re, '').trim();
+}
+
 function buildCourseTreeRoots() {
-    return (state.courses || [])
-        .slice()
-        .sort((a, b) => (a.title || '').localeCompare(b.title || ''))
-        .map(c => ({
-            kind: 'course',
-            id: `course-${c.id}`,
-            rawId: c.id,
-            label: c.title || `Course ${c.id}`,
-            count: c.lecture_count || 0,
+    const all = (state.courses || []).slice();
+    const groups = new Map(); // tag -> [courses]
+    const other = [];
+    for (const c of all) {
+        const tag = extractTagFromTitle(c.title);
+        if (tag) {
+            if (!groups.has(tag)) groups.set(tag, []);
+            groups.get(tag).push(c);
+        } else {
+            other.push(c);
+        }
+    }
+    const roots = [];
+    for (const tag of TAG_ORDER) {
+        const list = groups.get(tag);
+        if (!list || list.length === 0) continue;
+        list.sort((a, b) => stripTagPrefix(a.title, tag).localeCompare(stripTagPrefix(b.title, tag)));
+        roots.push({
+            kind: 'tag-group',
+            id: `tag-${tag}`,
+            tag,
+            label: `${TAG_LABELS[tag] || tag} (${list.length})`,
+            courses: list,
             expandable: true,
-        }));
+        });
+    }
+    if (other.length > 0) {
+        other.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+        roots.push({
+            kind: 'tag-group',
+            id: 'tag-OTHER',
+            tag: 'OTHER',
+            label: `Other (${other.length})`,
+            courses: other,
+            expandable: true,
+        });
+    }
+    return roots;
 }
 
 function buildTranscriptsTreeRoots() {
@@ -534,6 +584,23 @@ function renderTreeNode(node, depth, parentEl) {
 }
 
 function renderChildren(parentNode, depth, childrenEl) {
+    if (parentNode.kind === 'tag-group') {
+        for (const course of parentNode.courses) {
+            const courseLabel = parentNode.tag === 'OTHER'
+                ? (course.title || `Course ${course.id}`)
+                : stripTagPrefix(course.title, parentNode.tag) || course.title || `Course ${course.id}`;
+            const courseNode = {
+                kind: 'course',
+                id: `course-${course.id}`,
+                rawId: course.id,
+                label: courseLabel,
+                count: course.lecture_count || 0,
+                expandable: true,
+            };
+            renderTreeNode(courseNode, depth, childrenEl);
+        }
+        return;
+    }
     if (parentNode.kind === 'course') {
         const sections = state.tree.cache.get(parentNode.rawId) || [];
         if (sections.length === 0) {
@@ -657,6 +724,10 @@ async function toggleNode(node) {
 }
 
 async function selectTreeNode(node) {
+    if (node.kind === 'tag-group') {
+        await toggleNode(node);
+        return;
+    }
     if (node.kind === 'course') {
         state.activeSource = `course-${node.rawId}`;
         state.activeSection = null;
@@ -709,6 +780,12 @@ async function selectTreeNode(node) {
 async function expandToActive() {
     if (state.activeSource && state.activeSource.startsWith('course-')) {
         const courseId = Number(state.activeSource.replace('course-', ''));
+        // Expand the tag-group ancestor so the active course is visible
+        const course = (state.courses || []).find(c => c.id === courseId);
+        if (course) {
+            const tag = extractTagFromTitle(course.title) || 'OTHER';
+            state.expanded.add(`tag-${tag}`);
+        }
         state.expanded.add(`course-${courseId}`);
         await ensureCourseTreeLoaded(courseId);
         if (state.activeSection) {
