@@ -859,6 +859,133 @@ app.get('/api/courses/lectures/:id', (req, res) => {
     res.json({ ...lecture, chunks, content: chunks.map(c => c.content).join('\n\n---\n\n') });
 });
 
+// Phase 5: GET /api/courses/lectures/:id/videos
+// Returns the list of archived video files for a lecture.
+// Response: [{ file, sizeBytes, durationSec }]
+app.get('/api/courses/lectures/:id/videos', async (req, res) => {
+    const db = getDb();
+    const lectureId = Number(req.params.id);
+    if (!Number.isInteger(lectureId) || lectureId <= 0) {
+        return res.status(400).json({ error: 'Invalid lecture id' });
+    }
+    const lecture = db.prepare(
+        'SELECT id, video_local_paths, video_duration_sec FROM course_lectures WHERE id = ?'
+    ).get(lectureId);
+    if (!lecture) {
+        return res.status(404).json({ error: 'Lecture not found' });
+    }
+
+    let paths = [];
+    if (lecture.video_local_paths) {
+        try { paths = JSON.parse(lecture.video_local_paths); }
+        catch { paths = []; }
+    }
+    if (!Array.isArray(paths)) paths = [];
+
+    const { resolveRelative } = await import('./media-library.js');
+    const results = [];
+    for (const relPath of paths) {
+        try {
+            const abs = resolveRelative(relPath);
+            const stat = fs.statSync(abs);
+            const file = path.basename(relPath);
+            results.push({
+                file,
+                sizeBytes: stat.size,
+                // For now we only know the AGGREGATE duration across all videos.
+                // If exactly one video, use it; otherwise return null and let the
+                // frontend display the player's own duration once loaded.
+                durationSec: (paths.length === 1) ? lecture.video_duration_sec : null,
+            });
+        } catch {
+            // file missing on disk — skip; frontend will see fewer entries than expected
+        }
+    }
+    res.json(results);
+});
+
+// Phase 5: GET /api/courses/lectures/:id/video/:filename
+// Streams a specific archived video file with HTTP Range support.
+// Filename must match /^video(_\d+)?\.mp4$/ AND be present in the lecture's
+// video_local_paths JSON array (defense in depth against path traversal).
+app.get('/api/courses/lectures/:id/video/:filename', async (req, res) => {
+    const db = getDb();
+    const lectureId = Number(req.params.id);
+    if (!Number.isInteger(lectureId) || lectureId <= 0) {
+        return res.status(400).json({ error: 'Invalid lecture id' });
+    }
+    const filename = req.params.filename;
+    if (!/^video(_\d+)?\.mp4$/.test(filename)) {
+        return res.status(404).end();
+    }
+
+    const lecture = db.prepare(
+        'SELECT video_local_paths FROM course_lectures WHERE id = ?'
+    ).get(lectureId);
+    if (!lecture || !lecture.video_local_paths) {
+        return res.status(404).end();
+    }
+
+    let paths = [];
+    try { paths = JSON.parse(lecture.video_local_paths); } catch { /* */ }
+    if (!Array.isArray(paths)) paths = [];
+
+    // The filename must match the BASENAME of one of the recorded paths
+    const matched = paths.find(p => path.basename(p) === filename);
+    if (!matched) {
+        return res.status(404).end();
+    }
+
+    const { resolveRelative } = await import('./media-library.js');
+    let absPath;
+    try {
+        absPath = resolveRelative(matched);
+    } catch {
+        return res.status(404).end();
+    }
+
+    let stat;
+    try { stat = fs.statSync(absPath); }
+    catch { return res.status(404).end(); }
+
+    const total = stat.size;
+    const range = req.headers.range;
+
+    if (!range) {
+        // Full file — 200 OK
+        res.writeHead(200, {
+            'Content-Type': 'video/mp4',
+            'Content-Length': total,
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': 'no-cache',
+        });
+        fs.createReadStream(absPath).pipe(res);
+        return;
+    }
+
+    // Parse "Range: bytes=START-END" (END optional)
+    const m = /^bytes=(\d+)-(\d*)$/.exec(range);
+    if (!m) {
+        return res.status(416).end();
+    }
+    const start = Number(m[1]);
+    let end = m[2] === '' ? total - 1 : Number(m[2]);
+    if (Number.isNaN(start) || Number.isNaN(end) || start > end || end >= total) {
+        res.status(416);
+        res.setHeader('Content-Range', `bytes */${total}`);
+        return res.end();
+    }
+
+    res.writeHead(206, {
+        'Content-Type': 'video/mp4',
+        'Content-Length': end - start + 1,
+        'Content-Range': `bytes ${start}-${end}/${total}`,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-cache',
+    });
+    fs.createReadStream(absPath, { start, end }).pipe(res);
+});
+
 // GET /api/courses/:id/sections — List sections for a course with lecture counts
 app.get('/api/courses/:id/sections', (req, res) => {
     const db = getDb();
