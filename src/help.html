@@ -345,14 +345,16 @@
       <div class="nav-item" data-section="searching"><span class="nav-item-icon">🔍</span> Searching</div>
       <div class="nav-item" data-section="ai-search"><span class="nav-item-icon">✨</span> AI Search</div>
       <div class="nav-item" data-section="detail"><span class="nav-item-icon">📄</span> Transcript Detail</div>
+      <div class="nav-item" data-section="video"><span class="nav-item-icon">▶️</span> Video Player</div>
 
       <div class="nav-section-label">Content & Sources</div>
       <div class="nav-item" data-section="sources"><span class="nav-item-icon">📦</span> Sources & Filters</div>
       <div class="nav-item" data-section="types"><span class="nav-item-icon">🏷</span> Content Types</div>
       <div class="nav-item" data-section="teachable"><span class="nav-item-icon">🎓</span> Teachable Courses</div>
+      <div class="nav-item" data-section="archive"><span class="nav-item-icon">💾</span> Archiving Videos</div>
 
       <div class="nav-section-label">Configuration</div>
-      <div class="nav-item" data-section="settings"><span class="nav-item-icon">⚙️</span> AI Settings</div>
+      <div class="nav-item" data-section="settings"><span class="nav-item-icon">⚙️</span> Settings</div>
       <div class="nav-item" data-section="themes"><span class="nav-item-icon">🎨</span> Themes</div>
       <div class="nav-item" data-section="shortcuts"><span class="nav-item-icon">⌨️</span> Keyboard Shortcuts</div>
     </nav>
@@ -364,7 +366,7 @@
       <section class="help-section active" id="section-overview">
         <h1>What is TranscriptDB?</h1>
         <p class="section-subtitle">
-          TranscriptDB is a personal, locally-run search engine for your Future Fiction Academy content — weekly summit recordings and Teachable course material. Everything lives on your machine in a SQLite database.
+          TranscriptDB is a personal, locally-run search engine for your Future Fiction Academy content — weekly summit recordings and Teachable course material. Everything lives on your machine in a SQLite database. It ships as a desktop app for Mac, Windows, and Linux.
         </p>
 
         <h2>What's in it</h2>
@@ -381,6 +383,9 @@
         <p>
           The AI Search feature goes further: it retrieves the most relevant chunks and sends them to an AI model via OpenRouter, which synthesizes a direct answer with citations.
         </p>
+        <p>
+          Course lectures can also have their Hotmart-hosted videos archived locally. Once archived, an inline player appears in the lecture detail view — and every timestamp in the transcript becomes a clickable link that jumps the video to that moment.
+        </p>
 
         <h2>The stats bar</h2>
         <p>The four numbers at the top of the app tell you what's loaded:</p>
@@ -395,26 +400,41 @@
       <!-- Browsing -->
       <section class="help-section" id="section-browsing">
         <h1>Browsing Content</h1>
-        <p class="section-subtitle">When no search is active, the main area shows the Browse view — a grid of all available transcripts and course lectures.</p>
+        <p class="section-subtitle">When no search is active, the main area shows the Browse view — a grid of all available transcripts and course lectures. The left sidebar is a collapsible file-explorer tree.</p>
 
-        <h2>The transcript grid</h2>
+        <h2>The sidebar tree</h2>
+        <p>
+          Teachable courses are grouped at the top level by their tag prefix: <strong>CUT</strong>, <strong>INK</strong>, <strong>LAN</strong>, <strong>LED</strong>, <strong>MID</strong>, and <strong>Other</strong>. Click a group label to expand or collapse it.
+        </p>
+        <p>Inside each group, courses expand into a hierarchy:</p>
+        <ul>
+          <li><strong>Course</strong> — click to browse all lectures for that course</li>
+          <li><strong>Section</strong> — click to narrow to that section's lectures</li>
+          <li><strong>Class group</strong> — click to narrow to a specific class number</li>
+          <li><strong>Individual lecture</strong> — click to open the detail view directly</li>
+        </ul>
+        <p>
+          Below the course tree, a <strong>Show transcripts ▾</strong> toggle reveals non-course sources such as Summit transcript collections. Click it again to collapse.
+        </p>
+
+        <h2>Resizing the sidebar</h2>
+        <p>
+          Drag the vertical seam between the sidebar and the main content to widen or narrow the sidebar. The width is saved in localStorage and remembered on your next session.
+        </p>
+
+        <h2>The lecture grid</h2>
         <p>Each card in the grid shows:</p>
         <ul>
-          <li>The <strong>lecture name</strong> (or course title for Teachable content)</li>
-          <li>The <strong>filename or section</strong> it belongs to</li>
+          <li>The <strong>lecture name</strong></li>
+          <li>The <strong>section</strong> it belongs to</li>
           <li>A <strong>type badge</strong> (Lesson, Pre Q&A, Post Q&A, Work Session, or Course)</li>
           <li>The <strong>date</strong> and <strong>duration</strong> if available</li>
         </ul>
         <p>Click any card to open its full transcript in the <strong>Detail view</strong>.</p>
 
-        <h2>The Sessions list</h2>
-        <p>
-          The left sidebar's <strong>Sessions</strong> list shows all distinct lecture names for the current transcript source. When a <strong>Teachable course</strong> is selected, it shows the course's <strong>sections</strong> (chapters) instead. Click a session or section to narrow the grid to only that content. Click <strong>All Lectures</strong> (or <strong>All Sections</strong>) at the top to clear the selection.
-        </p>
-
         <h2>Notion notes bar</h2>
         <p>
-          When a Teachable course has a linked Notion page, a <strong>View Notes in Notion →</strong> bar appears above the lecture grid. Click it to open the notes in a new tab. Click <strong>Edit URL</strong> to update the link. See the <strong>Teachable Courses</strong> section for how to set a Notion URL.
+          When a Teachable course has a linked Notion page, a <strong>View Notes in Notion →</strong> bar appears above the lecture grid. Click it to open the notes in a new tab. Click <strong>Edit URL</strong> to update the link.
         </p>
 
         <h2>Returning to browse</h2>
@@ -438,14 +458,14 @@
         <h2>Search results</h2>
         <p>Each result card shows the matching chunk with the matched terms highlighted. The result count line beneath the search bar tells you how many matches were found across transcripts and courses.</p>
         <p>Click a result card from a <strong>transcript source</strong> to open the full transcript with your search terms highlighted.</p>
-        <p>Course lecture results (marked with a <span class="badge badge-course">Course</span> badge) also open a full-text view of that lecture.</p>
+        <p>Course lecture results (marked with a <span class="badge badge-course">Course</span> badge) open the lecture detail view — with the inline video player shown above the transcript if that lecture has an archived video.</p>
 
         <h2>Filtering search results</h2>
         <p>All active filters apply to search results too:</p>
         <ul>
-          <li><strong>Source dropdown</strong> — limit to one transcript source or course</li>
+          <li><strong>Sidebar tree</strong> — selecting a course or source in the tree limits results to that content</li>
           <li><strong>Type chips</strong> — limit to one content type</li>
-          <li><strong>Session</strong> — limit to a specific lecture/session</li>
+          <li><strong>Session</strong> — limit to a specific lecture/session within the selected source</li>
         </ul>
 
         <h2>Clearing search</h2>
@@ -460,7 +480,7 @@
         <h2>Enabling AI Search</h2>
         <p>Click the <strong>✨ AI</strong> button in the search bar to toggle AI mode on. The button turns amber when active and the search placeholder changes to indicate AI mode.</p>
         <div class="info-box">
-          <strong>Requires setup:</strong> AI Search needs an OpenRouter API key and a selected model. If neither is configured, the settings panel opens automatically when you try to search. See the <strong>AI Settings</strong> section for setup instructions.
+          <strong>Requires setup:</strong> AI Search needs an OpenRouter API key and a selected model. If neither is configured, the settings panel opens automatically when you try to search. See the <strong>Settings</strong> section for setup instructions.
         </div>
 
         <h2>How it works</h2>
@@ -493,13 +513,15 @@
       <!-- Detail View -->
       <section class="help-section" id="section-detail">
         <h1>Transcript Detail</h1>
-        <p class="section-subtitle">The Detail view shows the full text of a single transcript or course lecture.</p>
+        <p class="section-subtitle">The Detail view shows the full text of a single transcript or course lecture. When a lecture has an archived video, the inline player appears above the transcript.</p>
 
         <h2>What you'll see</h2>
         <ul>
-          <li><strong>Header</strong> — lecture name, filename, type badge, date, and duration</li>
+          <li><strong>Video player</strong> — appears above the transcript when the lecture has at least one archived video file. Not shown for transcript-only sources or un-archived lectures.</li>
+          <li><strong>Header</strong> — lecture name, section, type badge, date, and duration</li>
+          <li><strong>Archive Videos button</strong> — visible on course lecture headers; opens the archiving progress modal for that course</li>
           <li><strong>Full text</strong> — the complete transcript content</li>
-          <li><strong>Timestamps</strong> — time codes like <code>[00:15:30]</code> are styled distinctly for easy scanning</li>
+          <li><strong>Timestamps</strong> — time codes like <code>[00:15:30]</code> or <code>[MM:SS]</code> are rendered as amber clickable links when a player is present (click to seek + play), or styled for visual scanning when there's no player</li>
           <li><strong>Speaker names</strong> — patterns like "Name:" at the start of a paragraph are highlighted to make dialogue easier to follow</li>
           <li><strong>Clickable links</strong> — all URLs in the text are rendered as live links that open in a new tab</li>
           <li><strong>Search highlights</strong> — if you arrived from a search result, your search terms are highlighted throughout the text</li>
@@ -514,22 +536,57 @@
         <p>Use the <strong>← Back</strong> button at the top left, or press <kbd>Escape</kbd> to return to your previous view.</p>
       </section>
 
+      <!-- Video Player -->
+      <section class="help-section" id="section-video">
+        <h1>Video Player</h1>
+        <p class="section-subtitle">When a course lecture has been archived locally, an inline video player appears above the transcript in the detail view. You can seek the video by clicking any timestamp in the transcript.</p>
+
+        <h2>Where the player appears</h2>
+        <p>The player is only shown in the lecture detail view for <strong>Teachable course lectures</strong> that have at least one archived video file. It does not appear for summit transcript sources, or for lectures that haven't been archived yet. If a lecture hasn't been archived, the detail view shows transcript text only.</p>
+
+        <div class="tip-box">
+          <strong>To get the player:</strong> Use the <strong>Archive Videos</strong> button on the course detail header (or the Archive Videos button inside any lecture detail header) to download the video for that course. See the <strong>Archiving Videos</strong> section for details.
+        </div>
+
+        <h2>Click-to-seek timestamps</h2>
+        <p>
+          Every <code>[HH:MM:SS]</code> or <code>[MM:SS]</code> timestamp in the transcript text is rendered as an amber clickable link when a player is present. Click any timestamp to:
+        </p>
+        <ul>
+          <li>Seek the player to that position</li>
+          <li>Start playback automatically</li>
+        </ul>
+        <p>This is the primary way to navigate a long lecture — scan the transcript for the topic you want, then click the timestamp next to it.</p>
+
+        <h2>Multi-video tabs</h2>
+        <p>
+          Some lectures contain more than one Hotmart-hosted video (for example, FFA Software Support Class Episodes with multiple segments). When a lecture has multiple archived video files, the player shows tabs above the video: <strong>Video 1</strong>, <strong>Video 2</strong>, etc. Click a tab to switch the player to that file. Timestamps in the transcript correspond to whichever video is currently active.
+        </p>
+
+        <h2>Playback speed</h2>
+        <p>
+          A speed selector appears on the player controls. Available speeds: <strong>0.5×, 0.75×, 1×, 1.25×, 1.5×, 1.75×, 2×</strong>. Your chosen speed is saved in localStorage and applied automatically the next time you open any lecture with a player.
+        </p>
+
+        <h2>Resizing the player</h2>
+        <p>
+          The player has a drag handle in its bottom-right corner. Drag it to make the player taller or shorter. The height is saved in localStorage and remembered across lectures and app restarts.
+        </p>
+      </section>
+
       <!-- Sources & Filters -->
       <section class="help-section" id="section-sources">
         <h1>Sources & Filters</h1>
-        <p class="section-subtitle">The sidebar gives you several ways to narrow what you see in browse and search.</p>
+        <p class="section-subtitle">The sidebar tree and filter chips give you several ways to narrow what you see in browse and search.</p>
 
-        <h2>Sources dropdown (sidebar top)</h2>
+        <h2>Sidebar tree — courses</h2>
         <p>
-          The <strong>Sources</strong> section at the top of the sidebar lists all your imported transcript collections and scraped Teachable courses. Click the dropdown to expand it and check/uncheck sources to include or exclude them from search results.
-        </p>
-        <p>
-          To view the content of a single source exclusively, choose it in the <strong>Source</strong> filter dropdown further down in the sidebar. This also changes the Sessions list to show only that source's lectures.
+          The upper portion of the sidebar shows Teachable courses grouped by tag prefix (CUT / INK / LAN / LED / MID / Other). Click a group to expand it, then click into a course, section, class group, or individual lecture. Clicking a node at any level narrows the main view to that scope.
         </p>
 
-        <h2>Source filter dropdown</h2>
+        <h2>Sidebar tree — transcripts</h2>
         <p>
-          The <strong>Source</strong> dropdown below the divider lets you lock the entire view (browse, search, and sessions) to a single transcript source or Teachable course. Choose "All Sources" to show everything.
+          Below the course groups, a <strong>Show transcripts ▾</strong> toggle reveals all non-course transcript sources (Summit sessions, imported collections, etc.). Click a source to browse it. Click again to collapse the transcripts panel.
         </p>
 
         <h2>Type filter chips</h2>
@@ -537,7 +594,7 @@
 
         <h2>Sessions list</h2>
         <p>
-          Below the type chips, the <strong>Sessions</strong> list shows all available lecture/session names for the currently selected source. Click a session to narrow the view to only that session. When a Teachable course is selected, this list shows course sections instead.
+          When a transcript source is selected, the Sessions list (inside the source view) shows all available session names. Click a session to narrow the view to only that session. When a Teachable course is selected, the tree itself provides section-level filtering.
         </p>
       </section>
 
@@ -589,27 +646,29 @@
         <p>Click <strong>🔐 Log in to Teachable</strong> in the sidebar. A browser window opens (Puppeteer) for you to log in with your Teachable credentials. Once logged in, the auth indicator in the header turns green and the session is saved so you don't need to log in again during the same session.</p>
 
         <div class="info-box">
-          <strong>Note:</strong> Your Teachable session cookies are stored locally in <code>data/cookies.json</code>. They are not committed to git.
+          <strong>Note:</strong> Your Teachable session cookies are stored locally in the app's userData directory. They are not committed to git.
         </div>
 
         <h2>Adding a course</h2>
         <ol class="step-list">
-          <li>Click the <strong>+</strong> button next to the Sources heading. A panel slides open showing your enrolled Teachable courses.</li>
+          <li>Click the <strong>+</strong> button next to the tree header. A panel slides open showing your enrolled Teachable courses, grouped by tag prefix.</li>
           <li>Check the courses you want to add.</li>
+          <li>Optionally check <strong>Force Refresh</strong> to re-fetch transcript text for lectures that have already been scraped.</li>
           <li>Click <strong>Scrape Selected</strong>. A progress bar shows the scraping progress lecture by lecture.</li>
-          <li>When complete, the new course appears in the Sources dropdown and is immediately searchable.</li>
+          <li>When complete, the new course appears in the sidebar tree and is immediately searchable.</li>
         </ol>
 
         <div class="tip-box">
-          <strong>Tip:</strong> Scraping can take a few minutes for large courses. The progress bar shows the current lecture being processed and the overall percentage.
+          <strong>Tip:</strong> Scraping can take a few minutes for large courses. The progress bar shows the current lecture being processed and the overall percentage. Re-scraping is safe — existing video archives are preserved.
         </div>
 
         <h2>How scraping works</h2>
         <p>For each lecture, the scraper first tries to download any attached text file (.txt), which gives clean content. If no text file is attached, it extracts the visible text from the lecture page DOM. The text is then chunked and indexed for full-text search and AI context.</p>
+        <p>The scrape uses an idempotent upsert — lectures are matched by their Teachable ID, so re-scraping updates content without destroying archived video data. Lectures removed from the course are soft-deleted rather than wiped.</p>
 
         <h2>Notion URL</h2>
         <p>
-          Each course can store a link to a Notion page (e.g., notes and transcripts for that course). When set, a <strong>View Notes in Notion →</strong> bar appears in bright blue above the lecture grid whenever that course is selected.
+          Each course can store a link to a Notion page (e.g., notes and transcripts for that course). When set, a <strong>View Notes in Notion →</strong> bar appears above the lecture grid whenever that course is selected.
         </p>
         <p>There are two ways to set a Notion URL:</p>
         <ul>
@@ -617,18 +676,81 @@
           <li><strong>From a lecture:</strong> if a lecture's text contains a <code>notion.site</code> link, a <strong>Set as course Notion URL</strong> button appears in the detail view. Click it to save that URL to the course.</li>
         </ul>
 
+        <h2>Deleting a course</h2>
+        <p>Open the course in the sidebar tree and look for the delete option in the course detail header. Confirm to remove the course and all its indexed content from the database. Archived video files in the media library are not deleted automatically.</p>
+      </section>
+
+      <!-- Archiving Videos -->
+      <section class="help-section" id="section-archive">
+        <h1>Archiving Videos</h1>
+        <p class="section-subtitle">Archiving downloads all Hotmart-hosted lecture videos to your local media library so you can watch them offline — and use click-to-seek timestamps in the transcript.</p>
+
+        <h2>Requirements</h2>
+        <p>
+          Video archiving requires <strong>ffmpeg</strong> to be installed on your system. If it's missing, an orange banner appears at the top of the app with install instructions:
+        </p>
+        <ul>
+          <li><strong>Mac:</strong> <code>brew install ffmpeg</code></li>
+          <li><strong>Windows:</strong> <code>choco install ffmpeg</code> or download from ffmpeg.org</li>
+          <li><strong>Linux:</strong> <code>sudo apt install ffmpeg</code> (or distro equivalent)</li>
+        </ul>
+        <p>You also need to have the course scraped (transcript text indexed) before archiving.</p>
+
+        <h2>How to archive</h2>
+        <ol class="step-list">
+          <li>Open a course by clicking it in the sidebar tree.</li>
+          <li>Click the <strong>Archive Videos</strong> button in the course detail header.</li>
+          <li>A progress modal opens, showing each lecture as it's processed. The scraper visits each lecture page, extracts the Hotmart video URL(s), and downloads them via ffmpeg.</li>
+          <li>When done, close the modal. Lectures with archived video now show a player in their detail view.</li>
+        </ol>
+
         <div class="tip-box">
-          <strong>Tip:</strong> The scraper automatically extracts Notion URLs from "Notes and Transcript" lectures when you first scrape a course. If the URL wasn't found automatically, use the "Set as course Notion URL" button.
+          <strong>Tip:</strong> You can cancel the archive run mid-way using the Cancel button in the progress modal. Already-downloaded lectures are kept. Re-running archive is safe — fully-archived lectures are skipped automatically.
         </div>
 
-        <h2>Deleting a course</h2>
-        <p>Open the Sources dropdown in the sidebar. Check the course you want to remove and click <strong>🗑 Delete Selected</strong>, then confirm. This removes the course and all its indexed content from the database.</p>
+        <h2>Multi-video lectures</h2>
+        <p>
+          Lectures with more than one Hotmart embed (e.g., Bookcamp episodes with multiple segments) have all their videos downloaded. Files are named <code>video.mp4</code>, <code>video_2.mp4</code>, <code>video_3.mp4</code>, etc. Each file corresponds to a tab in the video player.
+        </p>
+
+        <h2>Progress modal status labels</h2>
+        <table class="shortcut-table">
+          <thead>
+            <tr><th>Status</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Downloading</strong></td><td>ffmpeg is actively writing the file for this lecture.</td></tr>
+            <tr><td><strong>Skipped (already archived)</strong></td><td>All expected video files for this lecture already exist on disk — no download needed.</td></tr>
+            <tr><td><strong>Skipped (wrong provider)</strong></td><td>This lecture's video is hosted somewhere other than Hotmart (e.g., YouTube). Not supported yet.</td></tr>
+            <tr><td><strong>No video</strong></td><td>The lecture page had no embedded video to extract.</td></tr>
+            <tr><td><strong>Error</strong></td><td>Something went wrong for this lecture. The rest of the run continues.</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Where files are stored</h2>
+        <p>
+          Video files go into your <strong>Media Library</strong>, in a subfolder per course and per lecture. The media library path is set in <strong>Settings → Media Library Path</strong>. The default is shown during first-run setup. You can change the path at any time — existing files stay where they are, and you'd need to move them manually if you change the path.
+        </p>
       </section>
 
       <!-- Settings -->
       <section class="help-section" id="section-settings">
-        <h1>AI Settings</h1>
-        <p class="section-subtitle">Click the gear icon (⚙) in the top-right header to open AI Settings. This is where you configure the OpenRouter API key and select a model for AI Search.</p>
+        <h1>Settings</h1>
+        <p class="section-subtitle">Click the gear icon (⚙) in the top-right header to open Settings. This is where you configure the media library path, AI search, and other preferences.</p>
+
+        <h2>First-run splash</h2>
+        <p>
+          On first launch, a splash modal appears before the app is usable. It shows the default <strong>Media Library Path</strong> (where archived videos will be stored) and asks you to confirm it. You can change the path here before confirming. The media library can grow very large if you archive many courses — pick a drive with plenty of space.
+        </p>
+        <p>You can update this path at any time later in Settings.</p>
+
+        <h2>Media Library Path</h2>
+        <p>
+          The media library is a folder on your machine (or an external drive) where all archived course videos are stored. Click <strong>Choose Folder</strong> in Settings to open a native folder picker and select a new location.
+        </p>
+        <div class="info-box">
+          <strong>Note:</strong> Changing the media library path does not move existing files. If you switch to a new path, the app will look for videos in the new location and treat previously-archived lectures as un-archived until you move the files there manually.
+        </div>
 
         <h2>OpenRouter API Key</h2>
         <p>AI Search routes all requests through <strong>OpenRouter</strong>, which gives you access to hundreds of models from one API key.</p>
@@ -637,14 +759,14 @@
           <li>Generate an API key (starts with <code>sk-or-v1-</code>).</li>
           <li>Paste the key into the API key field in Settings and click <strong>Save</strong>.</li>
         </ol>
-        <p>The key is stored locally in <code>data/ai-settings.json</code> and never transmitted anywhere except to OpenRouter when you make AI searches.</p>
+        <p>The key is stored locally in the app's userData directory and never transmitted anywhere except to OpenRouter when you make AI searches.</p>
 
-        <h2>Selecting a model</h2>
+        <h2>Selecting an AI model</h2>
         <p>After saving your API key, click <strong>↻ Refresh</strong> in the Model section to fetch the current list of available models. Then click the model dropdown and choose one. You can filter the list by typing in the search box.</p>
         <p>The pricing shown next to each model is per million tokens (input / output). For casual use, models like <strong>google/gemini-flash-1.5</strong> or <strong>meta-llama/llama-3.1-8b-instruct:free</strong> are good starting points.</p>
 
         <div class="tip-box">
-          <strong>Tip:</strong> Your selected model is saved automatically. It persists across sessions so you don't need to reselect it each time.
+          <strong>Tip:</strong> Your selected model and playback speed are saved automatically and persist across sessions.
         </div>
       </section>
 
@@ -664,7 +786,7 @@
             <tr><td>🔆</td><td><strong>HC Light</strong></td><td>High contrast light — pure white with deep amber. Best for bright environments.</td></tr>
           </tbody>
         </table>
-        <p>Your chosen theme is saved in the browser's localStorage and remembered on next visit.</p>
+        <p>Your chosen theme is saved in localStorage and remembered on next launch. The help page inherits the same theme as the main app.</p>
       </section>
 
       <!-- Keyboard Shortcuts -->
