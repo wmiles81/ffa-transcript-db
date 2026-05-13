@@ -415,6 +415,25 @@ export function initializeDb() {
     }
   }
 
+  // Multi-video transcript support: tag each course_chunks row with the index
+  // of the video it belongs to (0-based, matches the position in
+  // course_lectures.video_local_paths). NULL means "no specific video" — used
+  // for single-video lectures (current behavior) and for any chunk that
+  // didn't sit under a particular video iframe in DOM order.
+  const chunkCols = db.prepare("PRAGMA table_info(course_chunks)").all();
+  if (!chunkCols.some(c => c.name === 'video_index')) {
+    db.exec("ALTER TABLE course_chunks ADD COLUMN video_index INTEGER");
+  }
+
+  // Per-video embed IDs from the lecture page (e.g., Hotmart's "4qXBW07EZv"
+  // from .../embed/4qXBW07EZv). JSON array, indexed alongside
+  // video_local_paths. Lets the archiver match a captured manifest URL to a
+  // specific iframe so downloaded files land in the same order the user sees
+  // on the page.
+  if (!lectureColsLatest.some(c => c.name === 'video_embed_ids')) {
+    db.exec("ALTER TABLE course_lectures ADD COLUMN video_embed_ids TEXT");
+  }
+
   return db;
 }
 
