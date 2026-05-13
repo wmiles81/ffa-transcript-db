@@ -2417,9 +2417,12 @@ body.splash-active {
    handle the browser sets inline width/height which take precedence over
    the computed aspect-ratio. */
 .lecture-player-wrap {
-  margin: 0 0 1.25rem;
-  width: 100%;
-  max-width: 100%;
+  /* margin: 0 auto centers horizontally when the box is narrower than its
+     parent — works at the 960px default AND after the user drags it smaller.
+     No max-width on the box itself: the user's inline width (set by `resize:
+     both` dragging) needs to be able to grow beyond the default. */
+  margin: 0 auto 1.25rem;
+  width: min(960px, 100%);
   aspect-ratio: 16 / 9;
   min-width: 280px;
   min-height: 200px;

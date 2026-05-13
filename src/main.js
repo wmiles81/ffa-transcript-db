@@ -1563,6 +1563,8 @@ function renderTranscriptDetail(transcript, highlightQuery) {
             </div>
             <video id="lecture-player"
                    controls preload="metadata"
+                   controlsList="nodownload noremoteplayback noplaybackrate"
+                   disablePictureInPicture
                    data-lecture-id="${escapeHtml(String(transcript.lectureId))}"
                    data-active-file="${escapeHtml(firstFile)}"
                    src="/api/courses/lectures/${encodeURIComponent(transcript.lectureId)}/video/${encodeURIComponent(firstFile)}">
