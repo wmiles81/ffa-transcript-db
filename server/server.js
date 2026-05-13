@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { initializeDb, getDb, closeDb } from './db.js';
 import { scrapeCourse, deleteCourse, openLoginBrowser, hasSession, clearSession, fetchAvailableCourses } from './scraper.js';
 import { checkFfmpeg, archiveCourseVideos } from './archive-orchestrator.js';
+import { ingestLecture, ingestPending, rebuildCourse, listEntities, getEntity, lint as wikiLint, recentLog as wikiRecentLog } from './wiki.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -713,6 +714,121 @@ When answering:
 });
 
 // =============================================================================
+// LLM Wiki — Karpathy three-layer pattern
+// =============================================================================
+
+// GET /api/wiki/entities?kind=author|technique|tool|debate
+app.get('/api/wiki/entities', (req, res) => {
+    try {
+        const kind = req.query.kind || null;
+        const entities = listEntities({ kind });
+        // Parse aliases JSON for the client
+        const parsed = entities.map(e => {
+            let aliases = [];
+            try { aliases = JSON.parse(e.aliases || '[]'); } catch { /* ignore */ }
+            return { ...e, aliases };
+        });
+        res.json({ entities: parsed });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/wiki/entity/:id
+app.get('/api/wiki/entity/:id', (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) {
+            return res.status(400).json({ error: 'Invalid entity id' });
+        }
+        const entity = getEntity(id);
+        if (!entity) return res.status(404).json({ error: 'Entity not found' });
+        res.json(entity);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/wiki/ingest/:lectureId — manually ingest one lecture (dev/debug; auto-ingest covers normal flow)
+app.post('/api/wiki/ingest/:lectureId', async (req, res) => {
+    try {
+        const lectureId = Number(req.params.lectureId);
+        if (!Number.isInteger(lectureId) || lectureId <= 0) {
+            return res.status(400).json({ error: 'Invalid lecture id' });
+        }
+        const force = req.query.force === '1' || req.body?.force === true;
+        const result = await ingestLecture(lectureId, { force });
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/wiki/rebuild — SSE stream of rebuild progress.
+// Body: { courseId?: number }  — omit for full library rebuild.
+app.post('/api/wiki/rebuild', async (req, res) => {
+    const { courseId } = req.body || {};
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+    });
+    try {
+        if (courseId) {
+            const cid = Number(courseId);
+            const result = await rebuildCourse(cid, (event) => {
+                res.write(`data: ${JSON.stringify(event)}\n\n`);
+            });
+            res.write(`data: ${JSON.stringify({ type: 'done', ...result })}\n\n`);
+        } else {
+            // Full rebuild: walk every course, rebuilding sequentially.
+            const db = getDb();
+            const courses = db.prepare('SELECT id, title FROM courses ORDER BY title').all();
+            let totalProcessed = 0;
+            let totalFailed = 0;
+            for (let i = 0; i < courses.length; i++) {
+                const c = courses[i];
+                res.write(`data: ${JSON.stringify({ type: 'course', current: i + 1, total: courses.length, course: c.title })}\n\n`);
+                try {
+                    const r = await rebuildCourse(c.id, (event) => {
+                        res.write(`data: ${JSON.stringify(event)}\n\n`);
+                    });
+                    totalProcessed += r.processed;
+                    totalFailed += r.failed;
+                } catch (err) {
+                    totalFailed++;
+                    res.write(`data: ${JSON.stringify({ type: 'error', course: c.title, error: err.message })}\n\n`);
+                }
+            }
+            res.write(`data: ${JSON.stringify({ type: 'done', processed: totalProcessed, failed: totalFailed })}\n\n`);
+        }
+    } catch (err) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
+    } finally {
+        res.end();
+    }
+});
+
+// POST /api/wiki/lint — run lint and return findings
+app.post('/api/wiki/lint', (req, res) => {
+    try {
+        res.json(wikiLint());
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/wiki/log — recent wiki_log entries (for UI debug panel)
+app.get('/api/wiki/log', (req, res) => {
+    try {
+        const limit = Math.min(Number(req.query.limit) || 50, 500);
+        res.json({ entries: wikiRecentLog(limit) });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// =============================================================================
 // Teachable Course Management
 // =============================================================================
 
@@ -762,6 +878,17 @@ app.post('/api/courses/scrape', async (req, res) => {
             res.write(`data: ${JSON.stringify({ message, pct })}\n\n`);
         }, { forceRefresh });
         res.write(`data: ${JSON.stringify({ done: true, ...result })}\n\n`);
+
+        // Auto-ingest: kick off wiki extraction in the background for any lecture
+        // whose chunks are newer than its last wiki_ingested_at. Fire-and-forget;
+        // errors are logged to wiki_log but never thrown back to the scrape caller.
+        ingestPending({ courseId: result.courseId })
+            .then(summary => {
+                if (summary.total > 0) {
+                    console.log(`[wiki] auto-ingested course ${result.courseId}: ${summary.processed}/${summary.total} ok, ${summary.failed} failed`);
+                }
+            })
+            .catch(err => console.error('[wiki] auto-ingest crashed:', err.message));
     } catch (err) {
         res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
     }
