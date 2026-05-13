@@ -1516,13 +1516,18 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         ? `${Math.round(transcript.duration_minutes)} min`
         : '';
 
-    // Phase 7: restore saved player height (read before building HTML so it
-    // can be inlined as a style attribute — avoids layout flash)
+    // Phase 7: restore saved player width + height (read before building HTML so
+    // they can be inlined as style attributes — avoids layout flash)
     let savedPlayerHeight = null;
+    let savedPlayerWidth = null;
     try {
         const h = Number(localStorage.getItem('tdb-player-height'));
-        if (Number.isFinite(h) && h >= 200 && h <= window.innerHeight * 0.8) {
+        if (Number.isFinite(h) && h >= 200 && h <= window.innerHeight * 0.85) {
             savedPlayerHeight = h;
+        }
+        const w = Number(localStorage.getItem('tdb-player-width'));
+        if (Number.isFinite(w) && w >= 280 && w <= window.innerWidth * 0.95) {
+            savedPlayerWidth = w;
         }
     } catch { /* ignore */ }
 
@@ -1543,7 +1548,10 @@ function renderTranscriptDetail(transcript, highlightQuery) {
             .map(rate => `<option value="${rate}"${rate === savedPlayerSpeed ? ' selected' : ''}>${rate}×</option>`)
             .join('');
         const firstFile = transcript.videos[0].file;
-        const playerStyle = savedPlayerHeight ? ` style="height: ${savedPlayerHeight}px"` : '';
+        const styleParts = [];
+        if (savedPlayerWidth) styleParts.push(`width: ${savedPlayerWidth}px`);
+        if (savedPlayerHeight) styleParts.push(`height: ${savedPlayerHeight}px`);
+        const playerStyle = styleParts.length ? ` style="${styleParts.join('; ')}"` : '';
         playerHtml = `
         <div class="lecture-player-wrap"${playerStyle}>
             <div class="lecture-player-controls">
@@ -1668,7 +1676,7 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         });
     }
 
-    // Phase 7: persist player height on every resize (user dragging the handle)
+    // Phase 7: persist player width + height on every resize (user dragging the corner handle)
     const wrap = el.transcriptDetail.querySelector('.lecture-player-wrap');
     if (wrap && typeof ResizeObserver !== 'undefined') {
         let playerSaveTimer = null;
@@ -1676,8 +1684,11 @@ function renderTranscriptDetail(transcript, highlightQuery) {
             if (playerSaveTimer) clearTimeout(playerSaveTimer);
             playerSaveTimer = setTimeout(() => {
                 try {
-                    const h = Math.round(wrap.getBoundingClientRect().height);
+                    const rect = wrap.getBoundingClientRect();
+                    const h = Math.round(rect.height);
+                    const w = Math.round(rect.width);
                     if (h >= 200) localStorage.setItem('tdb-player-height', String(h));
+                    if (w >= 280) localStorage.setItem('tdb-player-width', String(w));
                 } catch { /* ignore */ }
             }, 300);
         });

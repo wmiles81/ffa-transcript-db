@@ -216,14 +216,19 @@ html {
   font-size: 15px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  height: 100%;
 }
 
 body {
   font-family: var(--font-sans);
   background: var(--bg-primary);
   color: var(--text-primary);
-  min-height: 100vh;
+  height: 100%;
   line-height: 1.6;
+  /* App-style layout: the whole viewport is bounded so #app's flex children
+     (sidebar + content) can each own their own scroll. min-height-only here
+     would let the page grow with content and break per-pane scrolling. */
+  overflow: hidden;
 }
 
 /* --- Scrollbar --- */
@@ -249,7 +254,7 @@ body {
 #app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100%;
 }
 
 /* --- Header --- */
@@ -2407,17 +2412,19 @@ body.splash-active {
 }
 
 /* Phase 5/6: Inline video player on lecture detail view */
-/* Phase 7: .lecture-player-wrap is user-resizable (vertical).
-   aspect-ratio gives a nice 16:9 default; once the user drags
-   the resize handle the browser sets an inline height which takes
-   precedence over the computed aspect-ratio height. */
+/* Phase 7: .lecture-player-wrap is user-resizable on both axes.
+   aspect-ratio gives a nice 16:9 default; once the user drags the corner
+   handle the browser sets inline width/height which take precedence over
+   the computed aspect-ratio. */
 .lecture-player-wrap {
   margin: 0 0 1.25rem;
   width: 100%;
+  max-width: 100%;
   aspect-ratio: 16 / 9;
+  min-width: 280px;
   min-height: 200px;
-  max-height: 80vh;
-  resize: vertical;
+  max-height: 85vh;
+  resize: both;
   overflow: hidden;
   display: flex;
   flex-direction: column;
