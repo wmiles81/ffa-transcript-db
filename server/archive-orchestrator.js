@@ -87,6 +87,7 @@ export async function archiveCourseVideos(courseId, opts = {}) {
             try {
                 const result = await downloadLectureVideo(lecture, {
                     force,
+                    signal,
                     onProgress: (msg) => onProgress({ ...baseEvent, status: 'downloading', detail: msg }),
                 });
                 if (result.ok) {
@@ -94,6 +95,7 @@ export async function archiveCourseVideos(courseId, opts = {}) {
                     onProgress({ ...baseEvent, status: 'done', sizeBytes: result.sizeBytes, durationSec: result.durationSec, videoCount: result.videoCount || 1 });
                 } else if (result.skipped) {
                     if (result.reason === 'already archived') tally.alreadyArchived++;
+                    else if (result.reason === 'aborted') { interrupted = true; break; }
                     else tally.wrongProvider++;
                     onProgress({ ...baseEvent, status: 'skipped', detail: result.reason });
                 } else if (result.error) {
