@@ -130,6 +130,20 @@
           </button>
           <div id="transcripts-tree" class="tree-root tree-transcripts hidden" role="tree" aria-label="Transcript sources"></div>
         </div>
+
+        <hr class="sidebar-divider" />
+        <div class="sidebar-section">
+          <div class="sidebar-heading-row">
+            <h3 class="sidebar-heading">Wiki</h3>
+            <button class="sidebar-add-btn" id="wiki-lint-btn" title="Run wiki lint">&#x2713;</button>
+          </div>
+          <ul class="wiki-nav" id="wiki-nav">
+            <li><button type="button" class="wiki-nav-item" data-kind="author">Authors <span class="wiki-nav-count" data-kind-count="author">—</span></button></li>
+            <li><button type="button" class="wiki-nav-item" data-kind="technique">Techniques <span class="wiki-nav-count" data-kind-count="technique">—</span></button></li>
+            <li><button type="button" class="wiki-nav-item" data-kind="tool">Tools <span class="wiki-nav-count" data-kind-count="tool">—</span></button></li>
+            <li><button type="button" class="wiki-nav-item" data-kind="debate">Debates <span class="wiki-nav-count" data-kind-count="debate">—</span></button></li>
+          </ul>
+        </div>
         <!-- Hidden stub: existing search code reads el.filterSource.value -->
         <select id="filter-source" class="filter-select" style="display:none">
           <option value="">All Sources</option>
@@ -214,6 +228,17 @@
             </div>
           </div>
 
+          <!-- Wiki View -->
+          <div id="wiki-view" class="hidden">
+            <div class="section-header">
+              <h2 id="wiki-title">Wiki</h2>
+              <span id="wiki-meta" class="wiki-meta"></span>
+            </div>
+            <div id="wiki-container">
+              <!-- Populated dynamically: list of entities or one entity's detail -->
+            </div>
+          </div>
+
           <!-- Transcript Detail View -->
           <div id="detail-view" class="hidden">
             <button class="back-btn" id="back-btn">
@@ -279,6 +304,23 @@
             <button type="button" id="settings-media-library-save" class="settings-btn settings-btn-primary">Save</button>
             <button type="button" id="settings-media-library-reset" class="settings-btn">Use default</button>
           </div>
+        </div>
+        <hr class="settings-divider" />
+        <div class="settings-section">
+          <h3 class="settings-section-heading">Wiki</h3>
+          <p class="settings-help">Re-extract entities, notes, and claims from every lecture in a course (or the whole library). Use this after changing extraction prompts or model — it wipes the wiki rows tied to those lectures first, then re-ingests.</p>
+          <div class="settings-row">
+            <label class="settings-label">Rebuild scope</label>
+            <select id="settings-wiki-rebuild-scope" class="settings-input">
+              <option value="">Whole library (all courses)</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <button type="button" id="settings-wiki-rebuild-btn" class="settings-btn settings-btn-primary">Rebuild wiki&hellip;</button>
+            <button type="button" id="settings-wiki-cancel-btn" class="settings-btn hidden">Cancel</button>
+          </div>
+          <div id="settings-wiki-status" class="settings-status"></div>
+          <div id="settings-wiki-progress" class="settings-info hidden"></div>
         </div>
       </div>
     </div>

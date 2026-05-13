@@ -29,6 +29,11 @@ const state = {
     activeClassNumber: null,
     activeLectureId: null,
     showTranscripts: false,
+    // Phase 5 (LLM Wiki) — selected kind & entity in the Wiki tab
+    activeWikiKind: null,
+    activeWikiEntityId: null,
+    wikiEntityCache: new Map(), // entityId -> detail (avoid refetching while clicking around)
+    wikiRebuildAbort: null,
 };
 
 // --- API Helpers ---
@@ -119,6 +124,18 @@ const el = {
     notionBar: document.getElementById('notion-bar'),
     notionLink: document.getElementById('notion-link'),
     notionEditBtn: document.getElementById('notion-edit-btn'),
+    // Phase 5 (LLM Wiki)
+    wikiView: document.getElementById('wiki-view'),
+    wikiTitle: document.getElementById('wiki-title'),
+    wikiMeta: document.getElementById('wiki-meta'),
+    wikiContainer: document.getElementById('wiki-container'),
+    wikiNav: document.getElementById('wiki-nav'),
+    wikiLintBtn: document.getElementById('wiki-lint-btn'),
+    settingsWikiRebuildScope: document.getElementById('settings-wiki-rebuild-scope'),
+    settingsWikiRebuildBtn: document.getElementById('settings-wiki-rebuild-btn'),
+    settingsWikiCancelBtn: document.getElementById('settings-wiki-cancel-btn'),
+    settingsWikiStatus: document.getElementById('settings-wiki-status'),
+    settingsWikiProgress: document.getElementById('settings-wiki-progress'),
 };
 
 // --- Theme toggle ---
@@ -217,11 +234,15 @@ async function init() {
     setupEventListeners();
     setupSettingsListeners();
     setupCourseListeners();
+    setupWikiListeners();
+    setupWikiSettingsListeners();
     await initTree();
     attachMediaLibrarySettingsHandlers();
     attachSplashHandlers();
     await loadMediaLibrarySettings();
     await showFirstRunSplashIfNeeded();
+    populateWikiRebuildScope();
+    loadWikiKindCounts();
 }
 
 // --- Load Data ---
@@ -1655,6 +1676,7 @@ function switchView(view) {
     el.browseView.classList.toggle('hidden', view !== 'browse');
     el.searchView.classList.toggle('hidden', view !== 'search');
     el.detailView.classList.toggle('hidden', view !== 'detail');
+    if (el.wikiView) el.wikiView.classList.toggle('hidden', view !== 'wiki');
 }
 
 // --- Event Listeners ---
@@ -1799,6 +1821,7 @@ async function loadCourses() {
         renderCourseList();
         clearTreeCache();
         renderTree();
+        populateWikiRebuildScope();
     } catch (e) { console.error('Failed to load courses:', e); }
 }
 
@@ -2523,5 +2546,362 @@ function attachSplashHandlers() {
         document.getElementById('splash-modal')?.classList.add('hidden');
         document.body.classList.remove('splash-active');
         document.getElementById('settings-btn')?.click();
+    });
+}
+
+// =============================================================================
+// Phase 5 — LLM Wiki tab
+// =============================================================================
+
+const WIKI_KIND_LABELS = {
+    author: { singular: 'Author', plural: 'Authors' },
+    technique: { singular: 'Technique', plural: 'Techniques' },
+    tool: { singular: 'Tool', plural: 'Tools' },
+    debate: { singular: 'Debate', plural: 'Debates' },
+};
+
+async function loadWikiKindCounts() {
+    if (!el.wikiNav) return;
+    try {
+        const data = await api('/api/wiki/entities');
+        const byKind = { author: 0, technique: 0, tool: 0, debate: 0 };
+        for (const e of data.entities || []) {
+            if (byKind[e.kind] !== undefined) byKind[e.kind] += 1;
+        }
+        for (const kind of Object.keys(byKind)) {
+            const span = el.wikiNav.querySelector(`[data-kind-count="${kind}"]`);
+            if (span) span.textContent = byKind[kind];
+        }
+    } catch (err) {
+        console.warn('Wiki count fetch failed:', err.message);
+    }
+}
+
+async function openWikiKind(kind) {
+    if (!WIKI_KIND_LABELS[kind]) return;
+    state.activeWikiKind = kind;
+    state.activeWikiEntityId = null;
+    switchView('wiki');
+    highlightWikiNav(kind);
+    el.wikiTitle.textContent = WIKI_KIND_LABELS[kind].plural;
+    el.wikiMeta.textContent = 'Loading…';
+    el.wikiContainer.innerHTML = '<div class="wiki-loading">Loading entities…</div>';
+    try {
+        const data = await api(`/api/wiki/entities?kind=${encodeURIComponent(kind)}`);
+        renderWikiList(kind, data.entities || []);
+    } catch (err) {
+        el.wikiContainer.innerHTML = `<div class="wiki-empty">Failed to load: ${escapeHtml(err.message)}</div>`;
+        el.wikiMeta.textContent = '';
+    }
+}
+
+function highlightWikiNav(kind) {
+    if (!el.wikiNav) return;
+    for (const btn of el.wikiNav.querySelectorAll('.wiki-nav-item')) {
+        btn.classList.toggle('active', btn.getAttribute('data-kind') === kind);
+    }
+}
+
+function renderWikiList(kind, entities) {
+    const label = WIKI_KIND_LABELS[kind];
+    if (!entities.length) {
+        el.wikiMeta.textContent = '';
+        el.wikiContainer.innerHTML = `
+            <div class="wiki-empty">
+                <p>No <strong>${escapeHtml(label.plural.toLowerCase())}</strong> in the wiki yet.</p>
+                <p class="wiki-empty-hint">Scrape or re-scrape a course, or use <em>Settings → Wiki → Rebuild</em> to extract entities from existing lectures.</p>
+            </div>`;
+        return;
+    }
+    el.wikiMeta.textContent = `${entities.length} ${entities.length === 1 ? label.singular.toLowerCase() : label.plural.toLowerCase()}`;
+    const cards = entities.map(e => {
+        const aliases = Array.isArray(e.aliases) ? e.aliases : [];
+        const aliasText = aliases.length ? `<div class="wiki-card-aliases">also: ${aliases.slice(0, 4).map(escapeHtml).join(', ')}</div>` : '';
+        return `
+            <button type="button" class="wiki-card" data-entity-id="${e.id}">
+                <div class="wiki-card-name">${escapeHtml(e.canonical_name)}</div>
+                ${aliasText}
+                <div class="wiki-card-summary">${escapeHtml((e.summary || '').slice(0, 220))}</div>
+                <div class="wiki-card-counts">
+                    <span>${e.note_count} note${e.note_count === 1 ? '' : 's'}</span>
+                    <span>${e.claim_count} claim${e.claim_count === 1 ? '' : 's'}</span>
+                </div>
+            </button>`;
+    }).join('');
+    el.wikiContainer.innerHTML = `<div class="wiki-grid">${cards}</div>`;
+    el.wikiContainer.querySelectorAll('.wiki-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const id = Number(card.getAttribute('data-entity-id'));
+            if (id) openWikiEntity(id);
+        });
+    });
+}
+
+async function openWikiEntity(entityId) {
+    state.activeWikiEntityId = entityId;
+    el.wikiContainer.innerHTML = '<div class="wiki-loading">Loading entity…</div>';
+    el.wikiMeta.textContent = '';
+    let entity = state.wikiEntityCache.get(entityId);
+    if (!entity) {
+        try {
+            entity = await api(`/api/wiki/entity/${entityId}`);
+            state.wikiEntityCache.set(entityId, entity);
+        } catch (err) {
+            el.wikiContainer.innerHTML = `<div class="wiki-empty">Failed to load entity: ${escapeHtml(err.message)}</div>`;
+            return;
+        }
+    }
+    state.activeWikiKind = entity.kind;
+    highlightWikiNav(entity.kind);
+    renderWikiEntity(entity);
+}
+
+function renderWikiEntity(entity) {
+    const label = WIKI_KIND_LABELS[entity.kind] || { singular: entity.kind, plural: entity.kind + 's' };
+    el.wikiTitle.textContent = entity.canonical_name;
+    el.wikiMeta.textContent = `${label.singular.toLowerCase()} · ${entity.notes.length} note${entity.notes.length === 1 ? '' : 's'} · ${entity.claims.length} claim${entity.claims.length === 1 ? '' : 's'}`;
+
+    const aliases = Array.isArray(entity.aliases) ? entity.aliases : [];
+    const aliasBlock = aliases.length
+        ? `<div class="wiki-entity-aliases"><strong>Aliases:</strong> ${aliases.map(escapeHtml).join(', ')}</div>`
+        : '';
+    const summaryBlock = entity.summary
+        ? `<div class="wiki-entity-summary">${escapeHtml(entity.summary)}</div>`
+        : '';
+
+    const notesHtml = entity.notes.length
+        ? entity.notes.map(n => {
+            const sources = (n.sources || []).map(s => {
+                if (!s.id) return '';
+                const label = `${escapeHtml(s.course_title || '?')} › ${escapeHtml(s.title || '?')}`;
+                return `<a href="#" class="wiki-source-link" data-lecture-id="${s.id}">${label}</a>`;
+            }).filter(Boolean).join(' · ');
+            return `
+                <div class="wiki-note">
+                    <div class="wiki-note-body">${escapeHtml(n.markdown)}</div>
+                    <div class="wiki-note-sources">${sources || '<em>no sources</em>'}</div>
+                </div>`;
+        }).join('')
+        : '<div class="wiki-empty-inner">No notes yet.</div>';
+
+    const claimsHtml = entity.claims.length
+        ? entity.claims.map(c => {
+            const supportItems = (c.supports || []).map(s =>
+                `<li><a href="#" class="wiki-source-link" data-lecture-id="${s.lecture_id}">${escapeHtml(s.title || `Lecture ${s.lecture_id}`)}</a>${s.quote ? ` — <em>"${escapeHtml(s.quote)}"</em>` : ''}</li>`
+            ).join('');
+            const contradictItems = (c.contradicts || []).map(s =>
+                `<li><a href="#" class="wiki-source-link" data-lecture-id="${s.lecture_id}">${escapeHtml(s.title || `Lecture ${s.lecture_id}`)}</a>${s.quote ? ` — <em>"${escapeHtml(s.quote)}"</em>` : ''}</li>`
+            ).join('');
+            const hasContradictions = (c.contradicts || []).length > 0;
+            return `
+                <div class="wiki-claim ${hasContradictions ? 'has-contradictions' : ''}">
+                    <div class="wiki-claim-text">${escapeHtml(c.claim_text)}</div>
+                    ${supportItems ? `<div class="wiki-claim-supports"><strong>Supports:</strong><ul>${supportItems}</ul></div>` : ''}
+                    ${contradictItems ? `<div class="wiki-claim-contradicts"><strong>Contradicts:</strong><ul>${contradictItems}</ul></div>` : ''}
+                </div>`;
+        }).join('')
+        : '<div class="wiki-empty-inner">No claims yet.</div>';
+
+    el.wikiContainer.innerHTML = `
+        <div class="wiki-entity">
+            <a href="#" class="wiki-back-link" id="wiki-back-link">&larr; All ${escapeHtml(label.plural.toLowerCase())}</a>
+            ${aliasBlock}
+            ${summaryBlock}
+            <h3 class="wiki-section-heading">Notes</h3>
+            <div class="wiki-notes">${notesHtml}</div>
+            <h3 class="wiki-section-heading">Claims</h3>
+            <div class="wiki-claims">${claimsHtml}</div>
+        </div>`;
+
+    document.getElementById('wiki-back-link')?.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        state.activeWikiEntityId = null;
+        if (state.activeWikiKind) openWikiKind(state.activeWikiKind);
+    });
+    el.wikiContainer.querySelectorAll('.wiki-source-link').forEach(link => {
+        link.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            const lid = Number(link.getAttribute('data-lecture-id'));
+            if (lid) {
+                state.activeLectureId = lid;
+                loadTranscriptDetail(lid);
+            }
+        });
+    });
+}
+
+async function runWikiLint() {
+    if (!el.wikiLintBtn) return;
+    el.wikiLintBtn.disabled = true;
+    const origText = el.wikiLintBtn.textContent;
+    el.wikiLintBtn.textContent = '…';
+    try {
+        const res = await fetch('/api/wiki/lint', { method: 'POST' });
+        if (!res.ok) throw new Error(`Lint failed: ${res.status}`);
+        const data = await res.json();
+        showWikiLintReport(data);
+    } catch (err) {
+        alert(`Wiki lint failed: ${err.message}`);
+    } finally {
+        el.wikiLintBtn.disabled = false;
+        el.wikiLintBtn.textContent = origText;
+    }
+}
+
+function showWikiLintReport(data) {
+    switchView('wiki');
+    state.activeWikiKind = null;
+    state.activeWikiEntityId = null;
+    highlightWikiNav(null);
+    el.wikiTitle.textContent = 'Wiki Lint Report';
+    const orphanCount = data.orphanEntities?.length || 0;
+    const contradictedCount = data.contradictedClaims?.length || 0;
+    const staleCount = data.staleEntities?.length || 0;
+    const pending = data.lecturesPending || 0;
+    el.wikiMeta.textContent = `${orphanCount} orphans · ${contradictedCount} contradicted · ${staleCount} stale · ${pending} pending ingest`;
+
+    const section = (title, items, renderItem) => {
+        if (!items?.length) return `<div class="wiki-lint-section"><h3>${title}</h3><p class="wiki-empty-inner">None.</p></div>`;
+        return `<div class="wiki-lint-section"><h3>${title} (${items.length})</h3><ul>${items.map(renderItem).join('')}</ul></div>`;
+    };
+    const orphans = section('Orphan entities (no notes)', data.orphanEntities, e =>
+        `<li><a href="#" class="wiki-source-link" data-entity-id="${e.id}">${escapeHtml(e.canonical_name)}</a> <span class="wiki-lint-kind">(${escapeHtml(e.kind)})</span></li>`
+    );
+    const contradicted = section('Claims with contradictions', data.contradictedClaims, c =>
+        `<li><a href="#" class="wiki-source-link" data-entity-id="${c.entity_id}">${escapeHtml(c.canonical_name)}</a>: ${escapeHtml(c.claim_text)}</li>`
+    );
+    const stale = section('Entities not seen in 180+ days', data.staleEntities, e =>
+        `<li><a href="#" class="wiki-source-link" data-entity-id="${e.id}">${escapeHtml(e.canonical_name)}</a> <span class="wiki-lint-kind">(updated ${escapeHtml((e.updated_at || '').slice(0, 10))})</span></li>`
+    );
+    el.wikiContainer.innerHTML = `
+        <div class="wiki-lint">
+            <div class="wiki-lint-summary">Pending ingest: <strong>${pending}</strong> lecture(s) have transcripts newer than their wiki state.</div>
+            ${orphans}
+            ${contradicted}
+            ${stale}
+        </div>`;
+    el.wikiContainer.querySelectorAll('.wiki-source-link[data-entity-id]').forEach(link => {
+        link.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            const id = Number(link.getAttribute('data-entity-id'));
+            if (id) openWikiEntity(id);
+        });
+    });
+}
+
+function setupWikiListeners() {
+    if (!el.wikiNav) return;
+    el.wikiNav.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('.wiki-nav-item');
+        if (!btn) return;
+        const kind = btn.getAttribute('data-kind');
+        if (kind) {
+            // Drop the cached entity-detail so freshly-ingested data shows up
+            state.wikiEntityCache.clear();
+            openWikiKind(kind);
+        }
+    });
+    if (el.wikiLintBtn) {
+        el.wikiLintBtn.addEventListener('click', runWikiLint);
+    }
+}
+
+// --- Settings: Rebuild wiki ---
+
+function populateWikiRebuildScope() {
+    if (!el.settingsWikiRebuildScope) return;
+    // Clear all but the first "whole library" option
+    while (el.settingsWikiRebuildScope.options.length > 1) {
+        el.settingsWikiRebuildScope.remove(1);
+    }
+    for (const c of (state.courses || []).slice().sort((a, b) => a.title.localeCompare(b.title))) {
+        const opt = document.createElement('option');
+        opt.value = String(c.id);
+        opt.textContent = c.title;
+        el.settingsWikiRebuildScope.appendChild(opt);
+    }
+}
+
+async function startWikiRebuild() {
+    if (!el.settingsWikiRebuildBtn) return;
+    const scopeVal = el.settingsWikiRebuildScope?.value || '';
+    const courseId = scopeVal ? Number(scopeVal) : null;
+    const scopeLabel = courseId
+        ? (state.courses.find(c => c.id === courseId)?.title || `Course ${courseId}`)
+        : 'the entire library';
+    if (!confirm(`Rebuild wiki for ${scopeLabel}? This wipes existing notes/claims for those lectures and re-runs LLM extraction (slow + costs API tokens).`)) return;
+
+    el.settingsWikiRebuildBtn.disabled = true;
+    el.settingsWikiCancelBtn?.classList.remove('hidden');
+    el.settingsWikiStatus.textContent = 'Starting…';
+    el.settingsWikiProgress.classList.remove('hidden');
+    el.settingsWikiProgress.innerHTML = '';
+
+    const controller = new AbortController();
+    state.wikiRebuildAbort = controller;
+    try {
+        const res = await fetch('/api/wiki/rebuild', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(courseId ? { courseId } : {}),
+            signal: controller.signal,
+        });
+        if (!res.ok || !res.body) throw new Error(`Rebuild failed: HTTP ${res.status}`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const ev = JSON.parse(line.slice(6));
+                    handleRebuildEvent(ev);
+                } catch { /* skip */ }
+            }
+        }
+        el.settingsWikiStatus.textContent = 'Done.';
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            el.settingsWikiStatus.textContent = 'Cancelled.';
+        } else {
+            el.settingsWikiStatus.textContent = `Failed: ${err.message}`;
+        }
+    } finally {
+        el.settingsWikiRebuildBtn.disabled = false;
+        el.settingsWikiCancelBtn?.classList.add('hidden');
+        state.wikiRebuildAbort = null;
+        // Refresh sidebar counts so the UI reflects the rebuild
+        loadWikiKindCounts();
+        // Invalidate cached entity details
+        state.wikiEntityCache.clear();
+    }
+}
+
+function handleRebuildEvent(ev) {
+    if (!el.settingsWikiStatus) return;
+    if (ev.type === 'course') {
+        el.settingsWikiStatus.textContent = `Course ${ev.current}/${ev.total}: ${ev.course}`;
+    } else if (ev.type === 'progress') {
+        el.settingsWikiStatus.textContent = `${ev.current}/${ev.total} · ${ev.lecture}`;
+    } else if (ev.type === 'error') {
+        const line = document.createElement('div');
+        line.className = 'wiki-rebuild-error';
+        line.textContent = `Error on ${ev.lecture || ev.course || '?'}: ${ev.error}`;
+        el.settingsWikiProgress.appendChild(line);
+    } else if (ev.type === 'done') {
+        const summary = `Processed ${ev.processed ?? 0}, skipped ${ev.skipped ?? 0}, failed ${ev.failed ?? 0}.`;
+        el.settingsWikiStatus.textContent = summary;
+    }
+}
+
+function setupWikiSettingsListeners() {
+    el.settingsWikiRebuildBtn?.addEventListener('click', startWikiRebuild);
+    el.settingsWikiCancelBtn?.addEventListener('click', () => {
+        if (state.wikiRebuildAbort) state.wikiRebuildAbort.abort();
     });
 }
