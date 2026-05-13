@@ -2,6 +2,7 @@
  * Transcript DB — Frontend Application
  * Handles search, browse, and transcript viewing.
  */
+import { APP_VERSION, APP_BUILD_SHA, APP_BUILD_DIRTY, APP_BUILD_DATE } from './version.js';
 
 // --- State ---
 const state = {
@@ -167,6 +168,20 @@ function applyTheme(theme) {
 
 // Apply immediately (before DOM paint)
 initTheme();
+
+// Stamp the header version badge from the values written by scripts/stamp-version.mjs.
+(function paintVersionBadge() {
+    const badge = document.getElementById('version-badge');
+    if (!badge) return;
+    const dirtyMark = APP_BUILD_DIRTY ? '*' : '';
+    badge.textContent = `v${APP_VERSION} · ${APP_BUILD_SHA}${dirtyMark}`;
+    const built = APP_BUILD_DATE ? new Date(APP_BUILD_DATE).toLocaleString() : 'unknown';
+    badge.title = `Version ${APP_VERSION}\nCommit ${APP_BUILD_SHA}${APP_BUILD_DIRTY ? ' (uncommitted changes at build time)' : ''}\nBuilt ${built}\n\nClick to copy`;
+    badge.addEventListener('click', () => {
+        const txt = `v${APP_VERSION} · ${APP_BUILD_SHA}${dirtyMark} · built ${APP_BUILD_DATE}`;
+        try { navigator.clipboard?.writeText(txt); } catch { /* ignore */ }
+    });
+})();
 
 // =============================================================================
 // Phase 7: Resizable sidebar

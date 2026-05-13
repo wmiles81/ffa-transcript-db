@@ -2761,3 +2761,23 @@ body.splash-active {
   font-size: 0.85rem;
   padding: 4px 0;
 }
+
+/* =============================================================================
+   Version badge — internal build identifier in the header
+   ========================================================================= */
+.version-badge {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin-right: 4px;
+  user-select: text;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: color 0.12s;
+}
+.version-badge:hover {
+  color: var(--text-primary);
+}
