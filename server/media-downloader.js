@@ -134,7 +134,10 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
     }
 
     const masterList = [...byParent.values()];
-    onProgress(`Found ${masterList.length} video(s) on this lecture page`, 10);
+    // Total-known signal: emit once with videoTotal so the UI can keep showing
+    // "Video X/N" through the rest of the lecture instead of losing the count
+    // after the next text message replaces it.
+    onProgress(`Found ${masterList.length} video(s) on this lecture page`, 10, { videoTotal: masterList.length });
 
     const dir = lectureDir(lecture.course_id, lecture.id);
     const downloadedPaths = [];
@@ -144,6 +147,12 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
     for (let i = 0; i < masterList.length; i++) {
         if (signal?.aborted) return { skipped: true, reason: 'aborted' };
         const master = masterList[i];
+        const videoInfo = { videoIndex: i + 1, videoTotal: masterList.length };
+        // Wrap onProgress so every ffmpeg-line callback gets tagged with the
+        // current video's index — the orchestrator merges this into the SSE
+        // event so the UI can render "Video N/M" for the whole download.
+        const onProgressForVideo = (msg, pct) => onProgress(msg, pct, videoInfo);
+
         // Naming: video.mp4 for the first (back-compat), video_2.mp4, video_3.mp4 for the rest
         const filename = i === 0 ? 'video.mp4' : `video_${i + 1}.mp4`;
         const dest = path.join(dir, filename);
@@ -155,7 +164,7 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
             downloadedPaths.push(relativize(dest));
             try { sizesBytes.push(fs.statSync(dest).size); } catch { sizesBytes.push(null); }
             durationsSec.push(null); // re-probe deferred
-            onProgress(`Video ${i + 1}/${masterList.length}: already exists, skipping`, Math.round(15 + (i / masterList.length) * 80));
+            onProgress(`Video ${i + 1}/${masterList.length}: already exists, skipping`, Math.round(15 + (i / masterList.length) * 80), videoInfo);
             continue;
         }
 
@@ -167,7 +176,7 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
             .map(([k, v]) => `${k}: ${v}`)
             .join('\r\n') + '\r\n';
 
-        onProgress(`Downloading video ${i + 1}/${masterList.length} via ffmpeg...`, Math.round(15 + (i / masterList.length) * 80));
+        onProgress(`Downloading video ${i + 1}/${masterList.length} via ffmpeg...`, Math.round(15 + (i / masterList.length) * 80), videoInfo);
 
         try {
             await runFfmpeg([
@@ -179,7 +188,7 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
                 // from inferring the format from the filename.
                 '-f', 'mp4',
                 tmpDest,
-            ], onProgress, signal);
+            ], onProgressForVideo, signal);
         } catch (err) {
             if (fs.existsSync(tmpDest)) {
                 try { fs.unlinkSync(tmpDest); } catch { /* ignore */ }
@@ -188,7 +197,7 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
                 return { skipped: true, reason: 'aborted' };
             }
             // Per-video failure: log but continue with remaining videos
-            onProgress(`Video ${i + 1} failed: ${err.message}`, null);
+            onProgress(`Video ${i + 1} failed: ${err.message}`, null, videoInfo);
             continue;
         }
 

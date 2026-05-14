@@ -2503,24 +2503,40 @@ async function startArchive(courseId, scope = {}) {
                             lectureList.appendChild(li);
                             lectureRows.set(event.lectureId, li);
                         }
+                        // Remember the latest videoTotal seen for this lecture so
+                        // detail messages that don't re-emit it (e.g. ffmpeg time=)
+                        // still display the right "Video X/Y".
+                        if (event.videoTotal) li.dataset.videoTotal = String(event.videoTotal);
+                        if (event.videoIndex) li.dataset.videoIndex = String(event.videoIndex);
+                        const vIdx = li.dataset.videoIndex;
+                        const vTot = li.dataset.videoTotal;
+                        const videoPart = vIdx && vTot
+                            ? ` · Video ${vIdx}/${vTot}`
+                            : (vTot ? ` · ${vTot} videos` : '');
+
                         if (event.status === 'start') {
+                            // Reset per-lecture counters on a new lecture (videoTotal
+                            // is unknown until the manifest scan inside this lecture).
+                            delete li.dataset.videoIndex;
+                            delete li.dataset.videoTotal;
                             currentLecture.textContent = `[${event.index}/${total}] ${event.title}`;
                             const pct = ((event.index - 1) / total) * 100;
                             progressFill.style.width = `${pct}%`;
                             li.textContent = `[${event.index}/${total}] ${event.title} — starting…`;
                             li.className = 'archive-lecture-row pending';
                         } else if (event.status === 'downloading') {
-                            li.textContent = `[${event.index}/${total}] ${event.title} — ${event.detail}`;
+                            currentLecture.textContent = `[${event.index}/${total}] ${event.title}${videoPart}`;
+                            li.textContent = `[${event.index}/${total}] ${event.title}${videoPart} — ${event.detail}`;
                             li.className = 'archive-lecture-row downloading';
                         } else if (event.status === 'done') {
                             const countStr = event.videoCount && event.videoCount > 1 ? ` (${event.videoCount} videos)` : '';
                             li.textContent = `[${event.index}/${total}] ${event.title} — downloaded${countStr}`;
                             li.className = 'archive-lecture-row done';
                         } else if (event.status === 'skipped') {
-                            li.textContent = `[${event.index}/${total}] ${event.title} — ${event.detail}`;
+                            li.textContent = `[${event.index}/${total}] ${event.title}${videoPart} — ${event.detail}`;
                             li.className = 'archive-lecture-row skipped';
                         } else if (event.status === 'error') {
-                            li.textContent = `[${event.index}/${total}] ${event.title} — ${event.detail}`;
+                            li.textContent = `[${event.index}/${total}] ${event.title}${videoPart} — ${event.detail}`;
                             li.className = 'archive-lecture-row error';
                         }
                         break;

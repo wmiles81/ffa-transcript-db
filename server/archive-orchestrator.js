@@ -106,7 +106,15 @@ export async function archiveCourseVideos(courseId, opts = {}) {
                 const result = await downloadLectureVideo(lecture, {
                     force,
                     signal,
-                    onProgress: (msg) => onProgress({ ...baseEvent, status: 'downloading', detail: msg }),
+                    // Third-arg `extra` carries structured info (videoIndex,
+                    // videoTotal) the downloader knows once the manifest scan
+                    // completes. We merge it into the SSE event so the UI can
+                    // render "Video N/M" alongside ffmpeg's time= progress.
+                    onProgress: (msg, _pct, extra) => {
+                        const event = { ...baseEvent, status: 'downloading', detail: msg };
+                        if (extra && typeof extra === 'object') Object.assign(event, extra);
+                        onProgress(event);
+                    },
                 });
                 if (result.ok) {
                     tally.downloaded++;
