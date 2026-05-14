@@ -296,7 +296,18 @@ export async function ingestLecture(lectureId, options = {}) {
   const chunks = db.prepare(
     'SELECT content FROM course_chunks WHERE lecture_id = ? ORDER BY position'
   ).all(lectureId);
-  const transcript = chunks.map(c => c.content).join('\n\n').trim();
+  // Legacy imported transcripts that have been FK-matched to this lecture
+  // (via the Phase 5b sidebar rework). Concatenate them after the scraped
+  // chunks so they participate in entity extraction — otherwise the wiki
+  // would be blind to any pre-scraper content the user has manually linked.
+  const linkedTranscripts = db.prepare(
+    'SELECT content FROM transcripts WHERE lecture_id = ? ORDER BY transcript_type, filename'
+  ).all(lectureId);
+  const parts = [
+    ...chunks.map(c => c.content),
+    ...linkedTranscripts.map(t => t.content),
+  ];
+  const transcript = parts.join('\n\n').trim();
   if (transcript.length < 200) {
     db.prepare('UPDATE course_lectures SET wiki_ingested_at = ? WHERE id = ?')
       .run(nowIso(), lectureId);
