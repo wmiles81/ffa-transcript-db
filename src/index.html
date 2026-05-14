@@ -339,8 +339,10 @@
     </div>
   </div>
 
-  <!-- Phase 4b: Archive Videos progress modal -->
-  <div id="archive-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="archive-modal-title">
+  <!-- Phase 4b: Archive Videos progress panel. Floats above the UI in the
+       bottom-right corner — not modal, so you can keep browsing other
+       lectures while a multi-video archive runs in the background. -->
+  <div id="archive-modal" class="archive-panel hidden" role="region" aria-labelledby="archive-modal-title">
     <div class="modal archive-modal-content">
       <div class="modal-header">
         <h2 id="archive-modal-title">Archiving Videos</h2>

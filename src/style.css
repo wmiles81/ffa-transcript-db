@@ -2108,6 +2108,25 @@ body.resizing {
 
 .archive-lecture-row.pending { color: var(--text-muted); }
 .archive-lecture-row.downloading { background: var(--accent-glow); color: var(--accent-light); }
+/* Archive Videos progress panel — non-modal floating card so the user can
+   keep browsing other lectures while a multi-video archive runs. Sits in
+   the bottom-right with a shadow + border instead of a full-screen
+   backdrop. The inner .modal/.archive-modal-content keeps its original
+   header/body/footer layout — only the outer overlay behavior changes. */
+.archive-panel {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 900;
+  max-width: 92vw;
+}
+.archive-panel.hidden { display: none; }
+.archive-panel .modal {
+  width: 520px;
+  max-width: 92vw;
+  max-height: 70vh;
+}
+
 .archive-lecture-row.done { color: var(--secondary); }
 .archive-lecture-row.done.partial { color: var(--accent-light, #f0a830); }
 .archive-lecture-row.skipped { color: var(--text-muted); }

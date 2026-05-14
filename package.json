@@ -1,6 +1,6 @@
 {
     "name": "ffa-transcript-db",
-    "version": "2.2.17",
+    "version": "2.2.18",
     "main": "electron/main.cjs",
     "description": "FFA Transcript Database — search transcripts and Teachable course content",
     "type": "module",
