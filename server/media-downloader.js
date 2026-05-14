@@ -12,10 +12,11 @@ const NAVIGATE_TIMEOUT_MS = 30_000;
 const FFMPEG_BIN = process.env.FFMPEG_BIN || 'ffmpeg';
 const SCHOOL_URL = process.env.TEACHABLE_SCHOOL_URL || 'https://future-fiction-academy.teachable.com';
 
-export async function downloadLectureVideo(lecture, { onProgress = () => { }, force = false } = {}) {
+export async function downloadLectureVideo(lecture, { onProgress = () => { }, force = false, signal } = {}) {
     if (lecture.video_provider !== VIDEO_PROVIDERS.HOTMART) {
         return { skipped: true, reason: `provider ${lecture.video_provider} not handled by this module` };
     }
+    if (signal?.aborted) return { skipped: true, reason: 'aborted' };
 
     // Idempotency: trust any complete N≥1 recorded path-set with all files on
     // disk. Single-path records used to be treated as incomplete (re-dwell
@@ -60,10 +61,16 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
         }
     } catch { /* fall through */ }
 
+    // If the caller aborts while we hold the Puppeteer browser open, force-close
+    // it so the dwell timer doesn't hold cleanup hostage for ~20 seconds.
+    const onAbortClose = () => { browser.close().catch(() => { /* ignore */ }); };
+    signal?.addEventListener('abort', onAbortClose, { once: true });
+
     try {
         try {
             await page.goto(lectureUrl, { waitUntil: 'networkidle2', timeout: NAVIGATE_TIMEOUT_MS });
         } catch (err) {
+            if (signal?.aborted) return { skipped: true, reason: 'aborted' };
             return { error: 'Navigation failed', details: err.message };
         }
 
@@ -87,6 +94,7 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
             onProgress(`Found ${liveEmbedIds.length} video embeds — scanning in document order...`, 3);
             const PER_IFRAME_DWELL = 6000;
             for (let i = 0; i < liveEmbedIds.length; i++) {
+                if (signal?.aborted) break;
                 try {
                     await page.evaluate((idx) => {
                         const fs = document.querySelectorAll('iframe[src*="hotmart"], iframe[src*="cf-embed"], iframe[src*="player.hotmart"]');
@@ -94,14 +102,16 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
                     }, i);
                 } catch { /* page navigated away */ }
                 onProgress(`Scanning video ${i + 1}/${liveEmbedIds.length}...`, 3 + Math.round((i / liveEmbedIds.length) * 6));
-                await new Promise(r => setTimeout(r, PER_IFRAME_DWELL));
+                await abortableSleep(PER_IFRAME_DWELL, signal);
             }
         } else {
             onProgress(`Waiting ${HLS_DWELL_MS / 1000}s for player to load manifest...`, 5);
-            await new Promise((r) => setTimeout(r, HLS_DWELL_MS));
+            await abortableSleep(HLS_DWELL_MS, signal);
         }
+        if (signal?.aborted) return { skipped: true, reason: 'aborted' };
     } finally {
-        await browser.close();
+        signal?.removeEventListener('abort', onAbortClose);
+        await browser.close().catch(() => { /* ignore — may already be closed by abort handler */ });
     }
 
     if (manifests.length === 0) {
@@ -132,6 +142,7 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
     const durationsSec = [];
 
     for (let i = 0; i < masterList.length; i++) {
+        if (signal?.aborted) return { skipped: true, reason: 'aborted' };
         const master = masterList[i];
         // Naming: video.mp4 for the first (back-compat), video_2.mp4, video_3.mp4 for the rest
         const filename = i === 0 ? 'video.mp4' : `video_${i + 1}.mp4`;
@@ -168,9 +179,14 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
                 // from inferring the format from the filename.
                 '-f', 'mp4',
                 tmpDest,
-            ], onProgress);
+            ], onProgress, signal);
         } catch (err) {
-            if (fs.existsSync(tmpDest)) fs.unlinkSync(tmpDest);
+            if (fs.existsSync(tmpDest)) {
+                try { fs.unlinkSync(tmpDest); } catch { /* ignore */ }
+            }
+            if (signal?.aborted || err.message === 'aborted') {
+                return { skipped: true, reason: 'aborted' };
+            }
             // Per-video failure: log but continue with remaining videos
             onProgress(`Video ${i + 1} failed: ${err.message}`, null);
             continue;
@@ -227,10 +243,36 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
     };
 }
 
-function runFfmpeg(args, onProgress) {
+// Sleep that resolves early when the signal aborts (instead of holding the
+// caller for the full duration). Used for the Hotmart Puppeteer dwell so cancel
+// doesn't have to wait out the ~20s timer.
+function abortableSleep(ms, signal) {
+    return new Promise((resolve) => {
+        if (signal?.aborted) return resolve();
+        const t = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        const onAbort = () => {
+            clearTimeout(t);
+            resolve();
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
+}
+
+function runFfmpeg(args, onProgress, signal) {
     return new Promise((resolve, reject) => {
+        if (signal?.aborted) return reject(new Error('aborted'));
         const ff = spawn(FFMPEG_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
         let stderr = '';
+        let abortedByUs = false;
+        const onAbort = () => {
+            abortedByUs = true;
+            try { ff.kill('SIGKILL'); } catch { /* already exited */ }
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+
         ff.stderr.on('data', (d) => {
             const s = d.toString();
             stderr += s;
@@ -242,10 +284,15 @@ function runFfmpeg(args, onProgress) {
             }
         });
         ff.on('close', (code) => {
+            signal?.removeEventListener('abort', onAbort);
+            if (abortedByUs || signal?.aborted) return reject(new Error('aborted'));
             if (code === 0) resolve();
             else reject(new Error(`ffmpeg exit ${code}\n${stderr.split('\n').slice(-30).join('\n')}`));
         });
-        ff.on('error', reject);
+        ff.on('error', (err) => {
+            signal?.removeEventListener('abort', onAbort);
+            reject(err);
+        });
     });
 }
 

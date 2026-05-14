@@ -2,6 +2,7 @@
  * Transcript DB — Frontend Application
  * Handles search, browse, and transcript viewing.
  */
+import { APP_VERSION, APP_BUILD_SHA, APP_BUILD_DIRTY, APP_BUILD_DATE } from './version.js';
 
 // --- State ---
 const state = {
@@ -28,7 +29,12 @@ const state = {
     expanded: new Set(),
     activeClassNumber: null,
     activeLectureId: null,
-    showTranscripts: false,
+    activeTranscriptId: null,
+    // Phase 5 (LLM Wiki) — selected kind & entity in the Wiki tab
+    activeWikiKind: null,
+    activeWikiEntityId: null,
+    wikiEntityCache: new Map(), // entityId -> detail (avoid refetching while clicking around)
+    wikiRebuildAbort: null,
 };
 
 // --- API Helpers ---
@@ -67,8 +73,9 @@ const el = {
     filterSource: document.getElementById('filter-source'),
     filterTypes: document.getElementById('filter-types'),
     sourceTree: document.getElementById('source-tree'),
-    transcriptsToggle: document.getElementById('transcripts-toggle'),
-    transcriptsTree: document.getElementById('transcripts-tree'),
+    unassignedSection: document.getElementById('unassigned-section'),
+    unassignedToggle: document.getElementById('unassigned-toggle'),
+    unassignedTree: document.getElementById('unassigned-tree'),
     // Removed: sourceDropdownSelect, lectureListSelect (elements deleted from HTML)
     sourceDropdownSelect: null,
     lectureListSelect: null,
@@ -119,6 +126,18 @@ const el = {
     notionBar: document.getElementById('notion-bar'),
     notionLink: document.getElementById('notion-link'),
     notionEditBtn: document.getElementById('notion-edit-btn'),
+    // Phase 5 (LLM Wiki)
+    wikiView: document.getElementById('wiki-view'),
+    wikiTitle: document.getElementById('wiki-title'),
+    wikiMeta: document.getElementById('wiki-meta'),
+    wikiContainer: document.getElementById('wiki-container'),
+    wikiNav: document.getElementById('wiki-nav'),
+    wikiLintBtn: document.getElementById('wiki-lint-btn'),
+    settingsWikiRebuildScope: document.getElementById('settings-wiki-rebuild-scope'),
+    settingsWikiRebuildBtn: document.getElementById('settings-wiki-rebuild-btn'),
+    settingsWikiCancelBtn: document.getElementById('settings-wiki-cancel-btn'),
+    settingsWikiStatus: document.getElementById('settings-wiki-status'),
+    settingsWikiProgress: document.getElementById('settings-wiki-progress'),
 };
 
 // --- Theme toggle ---
@@ -150,6 +169,20 @@ function applyTheme(theme) {
 
 // Apply immediately (before DOM paint)
 initTheme();
+
+// Stamp the header version badge from the values written by scripts/stamp-version.mjs.
+(function paintVersionBadge() {
+    const badge = document.getElementById('version-badge');
+    if (!badge) return;
+    const dirtyMark = APP_BUILD_DIRTY ? '*' : '';
+    badge.textContent = `v${APP_VERSION} · ${APP_BUILD_SHA}${dirtyMark}`;
+    const built = APP_BUILD_DATE ? new Date(APP_BUILD_DATE).toLocaleString() : 'unknown';
+    badge.title = `Version ${APP_VERSION}\nCommit ${APP_BUILD_SHA}${APP_BUILD_DIRTY ? ' (uncommitted changes at build time)' : ''}\nBuilt ${built}\n\nClick to copy`;
+    badge.addEventListener('click', () => {
+        const txt = `v${APP_VERSION} · ${APP_BUILD_SHA}${dirtyMark} · built ${APP_BUILD_DATE}`;
+        try { navigator.clipboard?.writeText(txt); } catch { /* ignore */ }
+    });
+})();
 
 // =============================================================================
 // Phase 7: Resizable sidebar
@@ -217,11 +250,15 @@ async function init() {
     setupEventListeners();
     setupSettingsListeners();
     setupCourseListeners();
+    setupWikiListeners();
+    setupWikiSettingsListeners();
     await initTree();
     attachMediaLibrarySettingsHandlers();
     attachSplashHandlers();
     await loadMediaLibrarySettings();
     await showFirstRunSplashIfNeeded();
+    populateWikiRebuildScope();
+    loadWikiKindCounts();
 }
 
 // --- Load Data ---
@@ -446,22 +483,11 @@ function restoreExpanded() {
     } catch {
         state.expanded = new Set();
     }
-    try {
-        state.showTranscripts = localStorage.getItem('tdb-tree-show-transcripts') === '1';
-    } catch {
-        state.showTranscripts = false;
-    }
 }
 
 function persistExpanded() {
     try {
         localStorage.setItem('tdb-tree-expanded', JSON.stringify([...state.expanded]));
-    } catch { /* quota */ }
-}
-
-function persistShowTranscripts() {
-    try {
-        localStorage.setItem('tdb-tree-show-transcripts', state.showTranscripts ? '1' : '0');
     } catch { /* quota */ }
 }
 
@@ -529,9 +555,14 @@ function buildCourseTreeRoots() {
     return roots;
 }
 
-function buildTranscriptsTreeRoots() {
+function buildUnassignedSourcesRoots() {
+    // Sources that haven't been FK-matched to any scraped course. The
+    // auto-match migration in server/db.js handles exact-name equality;
+    // anything left in this bucket is genuinely standalone content
+    // (podcasts, YouTube playlists, legacy imports) or an exact-match miss
+    // a user can fix manually with a UPDATE sources SET course_id = ... .
     return (state.sources || [])
-        .filter(s => !String(s.id).startsWith('course-'))
+        .filter(s => s.course_id == null && !String(s.id).startsWith('course-'))
         .slice()
         .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
         .map(s => ({
@@ -601,6 +632,32 @@ async function ensureSourceLecturesLoaded(sourceId) {
     }
 }
 
+async function ensureLectureTranscriptsLoaded(lectureId) {
+    const cacheKey = `lecture-transcripts-${lectureId}`;
+    if (state.tree.cache.has(cacheKey)) return state.tree.cache.get(cacheKey);
+    try {
+        const transcripts = await api(`/api/courses/lectures/${lectureId}/transcripts`);
+        state.tree.cache.set(cacheKey, transcripts);
+        return transcripts;
+    } catch (err) {
+        console.warn('failed to load lecture transcripts', lectureId, err);
+        return [];
+    }
+}
+
+async function ensureCourseOrphanTranscriptsLoaded(courseId) {
+    const cacheKey = `course-orphan-transcripts-${courseId}`;
+    if (state.tree.cache.has(cacheKey)) return state.tree.cache.get(cacheKey);
+    try {
+        const transcripts = await api(`/api/courses/${courseId}/orphan-transcripts`);
+        state.tree.cache.set(cacheKey, transcripts);
+        return transcripts;
+    } catch (err) {
+        console.warn('failed to load course orphan transcripts', courseId, err);
+        return [];
+    }
+}
+
 function renderTreeNode(node, depth, parentEl) {
     const wrap = document.createElement('div');
     wrap.className = 'tree-node-wrap';
@@ -613,7 +670,17 @@ function renderTreeNode(node, depth, parentEl) {
 
     const chevron = document.createElement('span');
     chevron.className = 'tree-chevron';
-    const isLeaf = node.kind === 'lecture' || node.kind === 'lecture-orphan';
+    // Lectures become expandable when they have FK-linked transcripts to surface
+    // as children. Transcript nodes themselves are always leaves.
+    const lectureHasTranscripts = (
+        (node.kind === 'lecture' || node.kind === 'lecture-orphan')
+        && node.lecture
+        && Number(node.lecture.transcript_count || 0) > 0
+    );
+    const isLeaf = (
+        node.kind === 'transcript'
+        || ((node.kind === 'lecture' || node.kind === 'lecture-orphan') && !lectureHasTranscripts)
+    );
     if (isLeaf) {
         chevron.classList.add('leaf');
     } else {
@@ -643,7 +710,8 @@ function renderTreeNode(node, depth, parentEl) {
         (node.kind === 'source' && state.activeSource === String(node.rawId)) ||
         (node.kind === 'section' && state.activeSection === node.rawId) ||
         (node.kind === 'class' && state.activeClassNumber === node.classNumber) ||
-        ((node.kind === 'lecture' || node.kind === 'lecture-orphan') && state.activeLectureId === (node.lecture && node.lecture.id))
+        ((node.kind === 'lecture' || node.kind === 'lecture-orphan') && state.activeLectureId === (node.lecture && node.lecture.id)) ||
+        (node.kind === 'transcript' && state.activeTranscriptId === (node.transcript && node.transcript.id))
     );
     if (isActive) row.classList.add('active');
 
@@ -709,17 +777,28 @@ function renderChildren(parentNode, depth, childrenEl) {
             };
             renderTreeNode(secNode, depth, childrenEl);
         }
+        // Course-level orphan transcripts: legacy imports whose source matched
+        // this course but whose individual lecture didn't match any scraped
+        // lecture title. Surface them as an "Other Transcripts" group so they
+        // remain reachable from the course.
+        const course = (state.courses || []).find(c => c.id === parentNode.rawId);
+        const orphanCount = course ? Number(course.orphan_transcript_count || 0) : 0;
+        if (orphanCount > 0) {
+            renderTreeNode({
+                kind: 'course-orphans',
+                id: `course-orphans-${parentNode.rawId}`,
+                courseId: parentNode.rawId,
+                label: 'Other Transcripts',
+                count: orphanCount,
+            }, depth, childrenEl);
+        }
     } else if (parentNode.kind === 'section') {
         const groups = groupLecturesByClassNumber(parentNode.lectures || []);
         for (const grp of groups) {
             if (grp.kind === 'class') {
                 renderTreeNode(grp, depth, childrenEl);
             } else if (grp.kind === 'lecture-orphan') {
-                renderTreeNode({
-                    kind: 'lecture',
-                    label: grp.lecture.title || '(untitled)',
-                    lecture: grp.lecture,
-                }, depth, childrenEl);
+                renderTreeNode(makeLectureNode(grp.lecture, grp.lecture.title || '(untitled)'), depth, childrenEl);
             }
         }
     } else if (parentNode.kind === 'class') {
@@ -727,11 +806,7 @@ function renderChildren(parentNode, depth, childrenEl) {
             const stripped = (lec.title || '')
                 .replace(new RegExp(`^${parentNode.classNumber}\\s*[-–]\\s*`), '')
                 .trim();
-            renderTreeNode({
-                kind: 'lecture',
-                label: stripped || lec.title || '(untitled)',
-                lecture: lec,
-            }, depth, childrenEl);
+            renderTreeNode(makeLectureNode(lec, stripped || lec.title || '(untitled)'), depth, childrenEl);
         }
     } else if (parentNode.kind === 'source') {
         const lectures = state.tree.cache.get(`source-${parentNode.rawId}`) || [];
@@ -750,7 +825,59 @@ function renderChildren(parentNode, depth, childrenEl) {
                 lecture: lec,
             }, depth, childrenEl);
         }
+    } else if (parentNode.kind === 'lecture' || parentNode.kind === 'lecture-orphan') {
+        const transcripts = state.tree.cache.get(`lecture-transcripts-${parentNode.lecture.id}`) || [];
+        if (transcripts.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'tree-empty';
+            empty.textContent = '(no transcripts)';
+            empty.style.paddingLeft = `${6 + depth * 14}px`;
+            childrenEl.appendChild(empty);
+            return;
+        }
+        for (const t of transcripts) {
+            renderTreeNode({
+                kind: 'transcript',
+                id: `transcript-${t.id}`,
+                transcript: t,
+                label: transcriptLabel(t),
+            }, depth, childrenEl);
+        }
+    } else if (parentNode.kind === 'course-orphans') {
+        const transcripts = state.tree.cache.get(`course-orphan-transcripts-${parentNode.courseId}`) || [];
+        if (transcripts.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'tree-empty';
+            empty.textContent = '(no orphan transcripts)';
+            empty.style.paddingLeft = `${6 + depth * 14}px`;
+            childrenEl.appendChild(empty);
+            return;
+        }
+        for (const t of transcripts) {
+            renderTreeNode({
+                kind: 'transcript',
+                id: `transcript-${t.id}`,
+                transcript: t,
+                label: `${t.lecture || '(unnamed)'} — ${transcriptLabel(t)}`,
+            }, depth, childrenEl);
+        }
     }
+}
+
+function makeLectureNode(lec, label) {
+    return {
+        kind: 'lecture',
+        id: lec && lec.id != null ? `lecture-${lec.id}` : null,
+        label,
+        lecture: lec,
+    };
+}
+
+function transcriptLabel(t) {
+    // Prefer the transcript_type ("Live Class", "Q&A", …) when present —
+    // it's the most useful distinguisher when a lecture has multiple
+    // transcripts. Fall back to the filename.
+    return t.transcript_type || t.filename || `Transcript ${t.id}`;
 }
 
 function renderTree() {
@@ -767,27 +894,26 @@ function renderTree() {
             renderTreeNode(root, 0, el.sourceTree);
         }
     }
-    renderTranscriptsTree();
+    renderUnassignedSourcesTree();
 }
 
-function renderTranscriptsTree() {
-    if (!el.transcriptsTree) return;
-    el.transcriptsTree.innerHTML = '';
-    el.transcriptsTree.classList.toggle('hidden', !state.showTranscripts);
-    if (el.transcriptsToggle) {
-        el.transcriptsToggle.setAttribute('aria-expanded', state.showTranscripts ? 'true' : 'false');
+function renderUnassignedSourcesTree() {
+    if (!el.unassignedTree || !el.unassignedSection) return;
+    el.unassignedTree.innerHTML = '';
+    const roots = buildUnassignedSourcesRoots();
+    // Hide the entire section when there's nothing to show — keeps the
+    // sidebar uncluttered for users whose imports all matched a course.
+    el.unassignedSection.classList.toggle('hidden', roots.length === 0);
+    if (roots.length === 0) return;
+    const expanded = state.expanded.has('unassigned-root');
+    if (el.unassignedToggle) {
+        el.unassignedToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        el.unassignedToggle.dataset.count = String(roots.length);
     }
-    if (!state.showTranscripts) return;
-    const roots = buildTranscriptsTreeRoots();
-    if (roots.length === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'tree-empty';
-        empty.textContent = '(no other sources)';
-        el.transcriptsTree.appendChild(empty);
-        return;
-    }
+    el.unassignedTree.classList.toggle('hidden', !expanded);
+    if (!expanded) return;
     for (const root of roots) {
-        renderTreeNode(root, 0, el.transcriptsTree);
+        renderTreeNode(root, 0, el.unassignedTree);
     }
 }
 
@@ -803,6 +929,12 @@ async function toggleNode(node) {
             await ensureCourseTreeLoaded(node.rawId);
         } else if (node.kind === 'source') {
             await ensureSourceLecturesLoaded(node.rawId);
+        } else if (node.kind === 'lecture' || node.kind === 'lecture-orphan') {
+            if (node.lecture && node.lecture.id != null) {
+                await ensureLectureTranscriptsLoaded(node.lecture.id);
+            }
+        } else if (node.kind === 'course-orphans') {
+            await ensureCourseOrphanTranscriptsLoaded(node.courseId);
         }
     }
     persistExpanded();
@@ -855,10 +987,20 @@ async function selectTreeNode(node) {
         const lec = node.lecture;
         if (lec && lec.id != null) {
             state.activeLectureId = lec.id;
+            state.activeTranscriptId = null;
             // course_lectures rows have section_id; non-course lectures don't
             const detailId = lec.section_id != null ? `clec-${lec.id}` : lec.id;
             loadTranscriptDetail(detailId);
         }
+    } else if (node.kind === 'transcript') {
+        const t = node.transcript;
+        if (t && t.id != null) {
+            state.activeTranscriptId = t.id;
+            loadTranscriptDetail(t.id);
+        }
+    } else if (node.kind === 'course-orphans') {
+        await toggleNode(node);
+        return;
     }
     renderTree();
 }
@@ -882,7 +1024,7 @@ async function expandToActive() {
         }
     } else if (state.activeSource) {
         state.expanded.add(`source-${state.activeSource}`);
-        state.showTranscripts = true;
+        state.expanded.add('unassigned-root');
         await ensureSourceLecturesLoaded(state.activeSource);
     }
 }
@@ -1480,13 +1622,18 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         ? `${Math.round(transcript.duration_minutes)} min`
         : '';
 
-    // Phase 7: restore saved player height (read before building HTML so it
-    // can be inlined as a style attribute — avoids layout flash)
+    // Phase 7: restore saved player width + height (read before building HTML so
+    // they can be inlined as style attributes — avoids layout flash)
     let savedPlayerHeight = null;
+    let savedPlayerWidth = null;
     try {
         const h = Number(localStorage.getItem('tdb-player-height'));
-        if (Number.isFinite(h) && h >= 200 && h <= window.innerHeight * 0.8) {
+        if (Number.isFinite(h) && h >= 200 && h <= window.innerHeight * 0.85) {
             savedPlayerHeight = h;
+        }
+        const w = Number(localStorage.getItem('tdb-player-width'));
+        if (Number.isFinite(w) && w >= 280 && w <= window.innerWidth * 0.95) {
+            savedPlayerWidth = w;
         }
     } catch { /* ignore */ }
 
@@ -1507,7 +1654,10 @@ function renderTranscriptDetail(transcript, highlightQuery) {
             .map(rate => `<option value="${rate}"${rate === savedPlayerSpeed ? ' selected' : ''}>${rate}×</option>`)
             .join('');
         const firstFile = transcript.videos[0].file;
-        const playerStyle = savedPlayerHeight ? ` style="height: ${savedPlayerHeight}px"` : '';
+        const styleParts = [];
+        if (savedPlayerWidth) styleParts.push(`width: ${savedPlayerWidth}px`);
+        if (savedPlayerHeight) styleParts.push(`height: ${savedPlayerHeight}px`);
+        const playerStyle = styleParts.length ? ` style="${styleParts.join('; ')}"` : '';
         playerHtml = `
         <div class="lecture-player-wrap"${playerStyle}>
             <div class="lecture-player-controls">
@@ -1519,6 +1669,8 @@ function renderTranscriptDetail(transcript, highlightQuery) {
             </div>
             <video id="lecture-player"
                    controls preload="metadata"
+                   controlsList="nodownload noremoteplayback noplaybackrate"
+                   disablePictureInPicture
                    data-lecture-id="${escapeHtml(String(transcript.lectureId))}"
                    data-active-file="${escapeHtml(firstFile)}"
                    src="/api/courses/lectures/${encodeURIComponent(transcript.lectureId)}/video/${encodeURIComponent(firstFile)}">
@@ -1632,7 +1784,7 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         });
     }
 
-    // Phase 7: persist player height on every resize (user dragging the handle)
+    // Phase 7: persist player width + height on every resize (user dragging the corner handle)
     const wrap = el.transcriptDetail.querySelector('.lecture-player-wrap');
     if (wrap && typeof ResizeObserver !== 'undefined') {
         let playerSaveTimer = null;
@@ -1640,8 +1792,11 @@ function renderTranscriptDetail(transcript, highlightQuery) {
             if (playerSaveTimer) clearTimeout(playerSaveTimer);
             playerSaveTimer = setTimeout(() => {
                 try {
-                    const h = Math.round(wrap.getBoundingClientRect().height);
+                    const rect = wrap.getBoundingClientRect();
+                    const h = Math.round(rect.height);
+                    const w = Math.round(rect.width);
                     if (h >= 200) localStorage.setItem('tdb-player-height', String(h));
+                    if (w >= 280) localStorage.setItem('tdb-player-width', String(w));
                 } catch { /* ignore */ }
             }, 300);
         });
@@ -1655,6 +1810,7 @@ function switchView(view) {
     el.browseView.classList.toggle('hidden', view !== 'browse');
     el.searchView.classList.toggle('hidden', view !== 'search');
     el.detailView.classList.toggle('hidden', view !== 'detail');
+    if (el.wikiView) el.wikiView.classList.toggle('hidden', view !== 'wiki');
 }
 
 // --- Event Listeners ---
@@ -1735,12 +1891,16 @@ function setupEventListeners() {
     // Back button
     el.backBtn.addEventListener('click', goBack);
 
-    // "Show transcripts" toggle
-    if (el.transcriptsToggle) {
-        el.transcriptsToggle.addEventListener('click', async () => {
-            state.showTranscripts = !state.showTranscripts;
-            persistShowTranscripts();
-            renderTranscriptsTree();
+    // "Unassigned Transcripts" collapse toggle
+    if (el.unassignedToggle) {
+        el.unassignedToggle.addEventListener('click', () => {
+            if (state.expanded.has('unassigned-root')) {
+                state.expanded.delete('unassigned-root');
+            } else {
+                state.expanded.add('unassigned-root');
+            }
+            persistExpanded();
+            renderUnassignedSourcesTree();
         });
     }
 }
@@ -1799,6 +1959,7 @@ async function loadCourses() {
         renderCourseList();
         clearTreeCache();
         renderTree();
+        populateWikiRebuildScope();
     } catch (e) { console.error('Failed to load courses:', e); }
 }
 
@@ -2523,5 +2684,362 @@ function attachSplashHandlers() {
         document.getElementById('splash-modal')?.classList.add('hidden');
         document.body.classList.remove('splash-active');
         document.getElementById('settings-btn')?.click();
+    });
+}
+
+// =============================================================================
+// Phase 5 — LLM Wiki tab
+// =============================================================================
+
+const WIKI_KIND_LABELS = {
+    author: { singular: 'Author', plural: 'Authors' },
+    technique: { singular: 'Technique', plural: 'Techniques' },
+    tool: { singular: 'Tool', plural: 'Tools' },
+    debate: { singular: 'Debate', plural: 'Debates' },
+};
+
+async function loadWikiKindCounts() {
+    if (!el.wikiNav) return;
+    try {
+        const data = await api('/api/wiki/entities');
+        const byKind = { author: 0, technique: 0, tool: 0, debate: 0 };
+        for (const e of data.entities || []) {
+            if (byKind[e.kind] !== undefined) byKind[e.kind] += 1;
+        }
+        for (const kind of Object.keys(byKind)) {
+            const span = el.wikiNav.querySelector(`[data-kind-count="${kind}"]`);
+            if (span) span.textContent = byKind[kind];
+        }
+    } catch (err) {
+        console.warn('Wiki count fetch failed:', err.message);
+    }
+}
+
+async function openWikiKind(kind) {
+    if (!WIKI_KIND_LABELS[kind]) return;
+    state.activeWikiKind = kind;
+    state.activeWikiEntityId = null;
+    switchView('wiki');
+    highlightWikiNav(kind);
+    el.wikiTitle.textContent = WIKI_KIND_LABELS[kind].plural;
+    el.wikiMeta.textContent = 'Loading…';
+    el.wikiContainer.innerHTML = '<div class="wiki-loading">Loading entities…</div>';
+    try {
+        const data = await api(`/api/wiki/entities?kind=${encodeURIComponent(kind)}`);
+        renderWikiList(kind, data.entities || []);
+    } catch (err) {
+        el.wikiContainer.innerHTML = `<div class="wiki-empty">Failed to load: ${escapeHtml(err.message)}</div>`;
+        el.wikiMeta.textContent = '';
+    }
+}
+
+function highlightWikiNav(kind) {
+    if (!el.wikiNav) return;
+    for (const btn of el.wikiNav.querySelectorAll('.wiki-nav-item')) {
+        btn.classList.toggle('active', btn.getAttribute('data-kind') === kind);
+    }
+}
+
+function renderWikiList(kind, entities) {
+    const label = WIKI_KIND_LABELS[kind];
+    if (!entities.length) {
+        el.wikiMeta.textContent = '';
+        el.wikiContainer.innerHTML = `
+            <div class="wiki-empty">
+                <p>No <strong>${escapeHtml(label.plural.toLowerCase())}</strong> in the wiki yet.</p>
+                <p class="wiki-empty-hint">Scrape or re-scrape a course, or use <em>Settings → Wiki → Rebuild</em> to extract entities from existing lectures.</p>
+            </div>`;
+        return;
+    }
+    el.wikiMeta.textContent = `${entities.length} ${entities.length === 1 ? label.singular.toLowerCase() : label.plural.toLowerCase()}`;
+    const cards = entities.map(e => {
+        const aliases = Array.isArray(e.aliases) ? e.aliases : [];
+        const aliasText = aliases.length ? `<div class="wiki-card-aliases">also: ${aliases.slice(0, 4).map(escapeHtml).join(', ')}</div>` : '';
+        return `
+            <button type="button" class="wiki-card" data-entity-id="${e.id}">
+                <div class="wiki-card-name">${escapeHtml(e.canonical_name)}</div>
+                ${aliasText}
+                <div class="wiki-card-summary">${escapeHtml((e.summary || '').slice(0, 220))}</div>
+                <div class="wiki-card-counts">
+                    <span>${e.note_count} note${e.note_count === 1 ? '' : 's'}</span>
+                    <span>${e.claim_count} claim${e.claim_count === 1 ? '' : 's'}</span>
+                </div>
+            </button>`;
+    }).join('');
+    el.wikiContainer.innerHTML = `<div class="wiki-grid">${cards}</div>`;
+    el.wikiContainer.querySelectorAll('.wiki-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const id = Number(card.getAttribute('data-entity-id'));
+            if (id) openWikiEntity(id);
+        });
+    });
+}
+
+async function openWikiEntity(entityId) {
+    state.activeWikiEntityId = entityId;
+    el.wikiContainer.innerHTML = '<div class="wiki-loading">Loading entity…</div>';
+    el.wikiMeta.textContent = '';
+    let entity = state.wikiEntityCache.get(entityId);
+    if (!entity) {
+        try {
+            entity = await api(`/api/wiki/entity/${entityId}`);
+            state.wikiEntityCache.set(entityId, entity);
+        } catch (err) {
+            el.wikiContainer.innerHTML = `<div class="wiki-empty">Failed to load entity: ${escapeHtml(err.message)}</div>`;
+            return;
+        }
+    }
+    state.activeWikiKind = entity.kind;
+    highlightWikiNav(entity.kind);
+    renderWikiEntity(entity);
+}
+
+function renderWikiEntity(entity) {
+    const label = WIKI_KIND_LABELS[entity.kind] || { singular: entity.kind, plural: entity.kind + 's' };
+    el.wikiTitle.textContent = entity.canonical_name;
+    el.wikiMeta.textContent = `${label.singular.toLowerCase()} · ${entity.notes.length} note${entity.notes.length === 1 ? '' : 's'} · ${entity.claims.length} claim${entity.claims.length === 1 ? '' : 's'}`;
+
+    const aliases = Array.isArray(entity.aliases) ? entity.aliases : [];
+    const aliasBlock = aliases.length
+        ? `<div class="wiki-entity-aliases"><strong>Aliases:</strong> ${aliases.map(escapeHtml).join(', ')}</div>`
+        : '';
+    const summaryBlock = entity.summary
+        ? `<div class="wiki-entity-summary">${escapeHtml(entity.summary)}</div>`
+        : '';
+
+    const notesHtml = entity.notes.length
+        ? entity.notes.map(n => {
+            const sources = (n.sources || []).map(s => {
+                if (!s.id) return '';
+                const label = `${escapeHtml(s.course_title || '?')} › ${escapeHtml(s.title || '?')}`;
+                return `<a href="#" class="wiki-source-link" data-lecture-id="${s.id}">${label}</a>`;
+            }).filter(Boolean).join(' · ');
+            return `
+                <div class="wiki-note">
+                    <div class="wiki-note-body">${escapeHtml(n.markdown)}</div>
+                    <div class="wiki-note-sources">${sources || '<em>no sources</em>'}</div>
+                </div>`;
+        }).join('')
+        : '<div class="wiki-empty-inner">No notes yet.</div>';
+
+    const claimsHtml = entity.claims.length
+        ? entity.claims.map(c => {
+            const supportItems = (c.supports || []).map(s =>
+                `<li><a href="#" class="wiki-source-link" data-lecture-id="${s.lecture_id}">${escapeHtml(s.title || `Lecture ${s.lecture_id}`)}</a>${s.quote ? ` — <em>"${escapeHtml(s.quote)}"</em>` : ''}</li>`
+            ).join('');
+            const contradictItems = (c.contradicts || []).map(s =>
+                `<li><a href="#" class="wiki-source-link" data-lecture-id="${s.lecture_id}">${escapeHtml(s.title || `Lecture ${s.lecture_id}`)}</a>${s.quote ? ` — <em>"${escapeHtml(s.quote)}"</em>` : ''}</li>`
+            ).join('');
+            const hasContradictions = (c.contradicts || []).length > 0;
+            return `
+                <div class="wiki-claim ${hasContradictions ? 'has-contradictions' : ''}">
+                    <div class="wiki-claim-text">${escapeHtml(c.claim_text)}</div>
+                    ${supportItems ? `<div class="wiki-claim-supports"><strong>Supports:</strong><ul>${supportItems}</ul></div>` : ''}
+                    ${contradictItems ? `<div class="wiki-claim-contradicts"><strong>Contradicts:</strong><ul>${contradictItems}</ul></div>` : ''}
+                </div>`;
+        }).join('')
+        : '<div class="wiki-empty-inner">No claims yet.</div>';
+
+    el.wikiContainer.innerHTML = `
+        <div class="wiki-entity">
+            <a href="#" class="wiki-back-link" id="wiki-back-link">&larr; All ${escapeHtml(label.plural.toLowerCase())}</a>
+            ${aliasBlock}
+            ${summaryBlock}
+            <h3 class="wiki-section-heading">Notes</h3>
+            <div class="wiki-notes">${notesHtml}</div>
+            <h3 class="wiki-section-heading">Claims</h3>
+            <div class="wiki-claims">${claimsHtml}</div>
+        </div>`;
+
+    document.getElementById('wiki-back-link')?.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        state.activeWikiEntityId = null;
+        if (state.activeWikiKind) openWikiKind(state.activeWikiKind);
+    });
+    el.wikiContainer.querySelectorAll('.wiki-source-link').forEach(link => {
+        link.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            const lid = Number(link.getAttribute('data-lecture-id'));
+            if (lid) {
+                state.activeLectureId = lid;
+                loadTranscriptDetail(lid);
+            }
+        });
+    });
+}
+
+async function runWikiLint() {
+    if (!el.wikiLintBtn) return;
+    el.wikiLintBtn.disabled = true;
+    const origText = el.wikiLintBtn.textContent;
+    el.wikiLintBtn.textContent = '…';
+    try {
+        const res = await fetch('/api/wiki/lint', { method: 'POST' });
+        if (!res.ok) throw new Error(`Lint failed: ${res.status}`);
+        const data = await res.json();
+        showWikiLintReport(data);
+    } catch (err) {
+        alert(`Wiki lint failed: ${err.message}`);
+    } finally {
+        el.wikiLintBtn.disabled = false;
+        el.wikiLintBtn.textContent = origText;
+    }
+}
+
+function showWikiLintReport(data) {
+    switchView('wiki');
+    state.activeWikiKind = null;
+    state.activeWikiEntityId = null;
+    highlightWikiNav(null);
+    el.wikiTitle.textContent = 'Wiki Lint Report';
+    const orphanCount = data.orphanEntities?.length || 0;
+    const contradictedCount = data.contradictedClaims?.length || 0;
+    const staleCount = data.staleEntities?.length || 0;
+    const pending = data.lecturesPending || 0;
+    el.wikiMeta.textContent = `${orphanCount} orphans · ${contradictedCount} contradicted · ${staleCount} stale · ${pending} pending ingest`;
+
+    const section = (title, items, renderItem) => {
+        if (!items?.length) return `<div class="wiki-lint-section"><h3>${title}</h3><p class="wiki-empty-inner">None.</p></div>`;
+        return `<div class="wiki-lint-section"><h3>${title} (${items.length})</h3><ul>${items.map(renderItem).join('')}</ul></div>`;
+    };
+    const orphans = section('Orphan entities (no notes)', data.orphanEntities, e =>
+        `<li><a href="#" class="wiki-source-link" data-entity-id="${e.id}">${escapeHtml(e.canonical_name)}</a> <span class="wiki-lint-kind">(${escapeHtml(e.kind)})</span></li>`
+    );
+    const contradicted = section('Claims with contradictions', data.contradictedClaims, c =>
+        `<li><a href="#" class="wiki-source-link" data-entity-id="${c.entity_id}">${escapeHtml(c.canonical_name)}</a>: ${escapeHtml(c.claim_text)}</li>`
+    );
+    const stale = section('Entities not seen in 180+ days', data.staleEntities, e =>
+        `<li><a href="#" class="wiki-source-link" data-entity-id="${e.id}">${escapeHtml(e.canonical_name)}</a> <span class="wiki-lint-kind">(updated ${escapeHtml((e.updated_at || '').slice(0, 10))})</span></li>`
+    );
+    el.wikiContainer.innerHTML = `
+        <div class="wiki-lint">
+            <div class="wiki-lint-summary">Pending ingest: <strong>${pending}</strong> lecture(s) have transcripts newer than their wiki state.</div>
+            ${orphans}
+            ${contradicted}
+            ${stale}
+        </div>`;
+    el.wikiContainer.querySelectorAll('.wiki-source-link[data-entity-id]').forEach(link => {
+        link.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            const id = Number(link.getAttribute('data-entity-id'));
+            if (id) openWikiEntity(id);
+        });
+    });
+}
+
+function setupWikiListeners() {
+    if (!el.wikiNav) return;
+    el.wikiNav.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('.wiki-nav-item');
+        if (!btn) return;
+        const kind = btn.getAttribute('data-kind');
+        if (kind) {
+            // Drop the cached entity-detail so freshly-ingested data shows up
+            state.wikiEntityCache.clear();
+            openWikiKind(kind);
+        }
+    });
+    if (el.wikiLintBtn) {
+        el.wikiLintBtn.addEventListener('click', runWikiLint);
+    }
+}
+
+// --- Settings: Rebuild wiki ---
+
+function populateWikiRebuildScope() {
+    if (!el.settingsWikiRebuildScope) return;
+    // Clear all but the first "whole library" option
+    while (el.settingsWikiRebuildScope.options.length > 1) {
+        el.settingsWikiRebuildScope.remove(1);
+    }
+    for (const c of (state.courses || []).slice().sort((a, b) => a.title.localeCompare(b.title))) {
+        const opt = document.createElement('option');
+        opt.value = String(c.id);
+        opt.textContent = c.title;
+        el.settingsWikiRebuildScope.appendChild(opt);
+    }
+}
+
+async function startWikiRebuild() {
+    if (!el.settingsWikiRebuildBtn) return;
+    const scopeVal = el.settingsWikiRebuildScope?.value || '';
+    const courseId = scopeVal ? Number(scopeVal) : null;
+    const scopeLabel = courseId
+        ? (state.courses.find(c => c.id === courseId)?.title || `Course ${courseId}`)
+        : 'the entire library';
+    if (!confirm(`Rebuild wiki for ${scopeLabel}? This wipes existing notes/claims for those lectures and re-runs LLM extraction (slow + costs API tokens).`)) return;
+
+    el.settingsWikiRebuildBtn.disabled = true;
+    el.settingsWikiCancelBtn?.classList.remove('hidden');
+    el.settingsWikiStatus.textContent = 'Starting…';
+    el.settingsWikiProgress.classList.remove('hidden');
+    el.settingsWikiProgress.innerHTML = '';
+
+    const controller = new AbortController();
+    state.wikiRebuildAbort = controller;
+    try {
+        const res = await fetch('/api/wiki/rebuild', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(courseId ? { courseId } : {}),
+            signal: controller.signal,
+        });
+        if (!res.ok || !res.body) throw new Error(`Rebuild failed: HTTP ${res.status}`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const ev = JSON.parse(line.slice(6));
+                    handleRebuildEvent(ev);
+                } catch { /* skip */ }
+            }
+        }
+        el.settingsWikiStatus.textContent = 'Done.';
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            el.settingsWikiStatus.textContent = 'Cancelled.';
+        } else {
+            el.settingsWikiStatus.textContent = `Failed: ${err.message}`;
+        }
+    } finally {
+        el.settingsWikiRebuildBtn.disabled = false;
+        el.settingsWikiCancelBtn?.classList.add('hidden');
+        state.wikiRebuildAbort = null;
+        // Refresh sidebar counts so the UI reflects the rebuild
+        loadWikiKindCounts();
+        // Invalidate cached entity details
+        state.wikiEntityCache.clear();
+    }
+}
+
+function handleRebuildEvent(ev) {
+    if (!el.settingsWikiStatus) return;
+    if (ev.type === 'course') {
+        el.settingsWikiStatus.textContent = `Course ${ev.current}/${ev.total}: ${ev.course}`;
+    } else if (ev.type === 'progress') {
+        el.settingsWikiStatus.textContent = `${ev.current}/${ev.total} · ${ev.lecture}`;
+    } else if (ev.type === 'error') {
+        const line = document.createElement('div');
+        line.className = 'wiki-rebuild-error';
+        line.textContent = `Error on ${ev.lecture || ev.course || '?'}: ${ev.error}`;
+        el.settingsWikiProgress.appendChild(line);
+    } else if (ev.type === 'done') {
+        const summary = `Processed ${ev.processed ?? 0}, skipped ${ev.skipped ?? 0}, failed ${ev.failed ?? 0}.`;
+        el.settingsWikiStatus.textContent = summary;
+    }
+}
+
+function setupWikiSettingsListeners() {
+    el.settingsWikiRebuildBtn?.addEventListener('click', startWikiRebuild);
+    el.settingsWikiCancelBtn?.addEventListener('click', () => {
+        if (state.wikiRebuildAbort) state.wikiRebuildAbort.abort();
     });
 }

@@ -1,12 +1,13 @@
 {
     "name": "ffa-transcript-db",
-    "version": "2.1.0",
+    "version": "2.2.0",
     "main": "electron/main.cjs",
     "description": "FFA Transcript Database — search transcripts and Teachable course content",
     "type": "module",
     "scripts": {
         "start": "node server/server.js",
-        "build": "npx vite build",
+        "build": "node scripts/stamp-version.mjs && npx vite build",
+        "stamp-version": "node scripts/stamp-version.mjs",
         "dist": "npm run build && mkdir -p _dist && zip -r _dist/ffa-transcript-db-v2.1.0.zip dist/ server/ package.json package-lock.json README.md LICENSE .env.example start.command start.sh start.bat -x '*.DS_Store'",
         "import": "node server/import.js",
         "archive-videos": "node server/archive-videos.js",

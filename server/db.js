@@ -259,6 +259,55 @@ export function initializeDb() {
 
     CREATE INDEX IF NOT EXISTS idx_course_lectures_course ON course_lectures(course_id);
     CREATE INDEX IF NOT EXISTS idx_course_chunks_lecture ON course_chunks(lecture_id);
+
+    -- ==========================================================================
+    -- LLM Wiki Tables (Karpathy three-layer pattern)
+    -- ==========================================================================
+
+    CREATE TABLE IF NOT EXISTS wiki_entities (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL CHECK(kind IN ('author','technique','tool','debate')),
+      canonical_name TEXT NOT NULL,
+      aliases TEXT,
+      summary TEXT,
+      first_seen_lecture_id INTEGER,
+      updated_at TEXT NOT NULL,
+      UNIQUE(kind, canonical_name)
+    );
+
+    CREATE TABLE IF NOT EXISTS wiki_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_id INTEGER NOT NULL,
+      markdown TEXT NOT NULL,
+      source_lecture_ids TEXT NOT NULL,
+      confidence REAL DEFAULT 0.8,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (entity_id) REFERENCES wiki_entities(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS wiki_claims (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_id INTEGER NOT NULL,
+      claim_text TEXT NOT NULL,
+      supports TEXT,
+      contradicts TEXT,
+      status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','resolved','retired')),
+      FOREIGN KEY (entity_id) REFERENCES wiki_entities(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS wiki_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      action TEXT NOT NULL,
+      entity_id INTEGER,
+      lecture_id INTEGER,
+      summary TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_wiki_entities_kind ON wiki_entities(kind);
+    CREATE INDEX IF NOT EXISTS idx_wiki_notes_entity ON wiki_notes(entity_id);
+    CREATE INDEX IF NOT EXISTS idx_wiki_claims_entity ON wiki_claims(entity_id);
+    CREATE INDEX IF NOT EXISTS idx_wiki_log_lecture ON wiki_log(lecture_id);
   `);
 
   // Migration: add class_number and notion_url to courses if missing
@@ -397,6 +446,12 @@ export function initializeDb() {
     ON course_sections(course_id, title)
   `).run();
 
+  // Phase 5 (LLM Wiki): track when each lecture was last ingested into the wiki layer.
+  // Compared against scraped_at to decide whether re-ingest is needed.
+  if (!lectureCols.some(c => c.name === 'wiki_ingested_at')) {
+    db.exec("ALTER TABLE course_lectures ADD COLUMN wiki_ingested_at TEXT");
+  }
+
   // Phase 4d follow-up: support multiple videos per lecture (e.g., Hotmart playlists with N embeds)
   // Re-read lectureCols after all prior migrations so we see the latest schema.
   const lectureColsLatest = db.prepare("PRAGMA table_info(course_lectures)").all();
@@ -432,6 +487,68 @@ export function initializeDb() {
   // on the page.
   if (!lectureColsLatest.some(c => c.name === 'video_embed_ids')) {
     db.exec("ALTER TABLE course_lectures ADD COLUMN video_embed_ids TEXT");
+  }
+
+  // Transcripts↔Lectures linkage. Legacy imported transcripts (sources +
+  // transcripts) used to sit in a parallel "Show transcripts" sidebar tree.
+  // To surface them where they belong — under the matching course/lecture —
+  // we add nullable FKs and run a conservative exact-normalized-name match.
+  // Unmatched rows stay NULL and surface under "Unassigned Transcripts" in
+  // the sidebar instead of being lost.
+  const sourceCols = db.prepare("PRAGMA table_info(sources)").all();
+  if (!sourceCols.some(c => c.name === 'course_id')) {
+    db.exec("ALTER TABLE sources ADD COLUMN course_id INTEGER REFERENCES courses(id)");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_sources_course_id ON sources(course_id)");
+
+  const transcriptCols = db.prepare("PRAGMA table_info(transcripts)").all();
+  if (!transcriptCols.some(c => c.name === 'lecture_id')) {
+    db.exec("ALTER TABLE transcripts ADD COLUMN lecture_id INTEGER REFERENCES course_lectures(id)");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_transcripts_lecture_id ON transcripts(lecture_id)");
+
+  // Auto-match: exact normalized-name equality only. Runs every startup but
+  // only fills NULLs — manual assignments and previously-matched rows are
+  // preserved. New courses scraped later get a chance to claim their
+  // orphaned sources without overwriting anything the user has fixed up.
+  const sourcesMatched = db.prepare(`
+    UPDATE sources
+    SET course_id = (
+      SELECT c.id FROM courses c
+      WHERE LOWER(TRIM(REPLACE(REPLACE(c.title,' ',''),'-',''))) =
+            LOWER(TRIM(REPLACE(REPLACE(sources.name,' ',''),'-','')))
+      LIMIT 1
+    )
+    WHERE course_id IS NULL
+      AND EXISTS (
+        SELECT 1 FROM courses c
+        WHERE LOWER(TRIM(REPLACE(REPLACE(c.title,' ',''),'-',''))) =
+              LOWER(TRIM(REPLACE(REPLACE(sources.name,' ',''),'-','')))
+      )
+  `).run();
+  if (sourcesMatched.changes > 0) {
+    console.warn(`[db] Transcripts migration: matched ${sourcesMatched.changes} source(s) to courses by exact name`);
+  }
+
+  const transcriptsMatched = db.prepare(`
+    UPDATE transcripts
+    SET lecture_id = (
+      SELECT cl.id FROM course_lectures cl
+      JOIN sources s ON s.course_id = cl.course_id
+      WHERE s.id = transcripts.source_id
+        AND LOWER(TRIM(cl.title)) = LOWER(TRIM(transcripts.lecture))
+      LIMIT 1
+    )
+    WHERE lecture_id IS NULL
+      AND EXISTS (
+        SELECT 1 FROM course_lectures cl
+        JOIN sources s ON s.course_id = cl.course_id
+        WHERE s.id = transcripts.source_id
+          AND LOWER(TRIM(cl.title)) = LOWER(TRIM(transcripts.lecture))
+      )
+  `).run();
+  if (transcriptsMatched.changes > 0) {
+    console.warn(`[db] Transcripts migration: matched ${transcriptsMatched.changes} transcript(s) to lectures by exact title`);
   }
 
   return db;

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { initializeDb, getDb, closeDb } from './db.js';
 import { scrapeCourse, deleteCourse, openLoginBrowser, hasSession, clearSession, fetchAvailableCourses } from './scraper.js';
 import { checkFfmpeg, archiveCourseVideos } from './archive-orchestrator.js';
+import { ingestLecture, ingestPending, rebuildCourse, listEntities, getEntity, lint as wikiLint, recentLog as wikiRecentLog } from './wiki.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -713,6 +714,121 @@ When answering:
 });
 
 // =============================================================================
+// LLM Wiki — Karpathy three-layer pattern
+// =============================================================================
+
+// GET /api/wiki/entities?kind=author|technique|tool|debate
+app.get('/api/wiki/entities', (req, res) => {
+    try {
+        const kind = req.query.kind || null;
+        const entities = listEntities({ kind });
+        // Parse aliases JSON for the client
+        const parsed = entities.map(e => {
+            let aliases = [];
+            try { aliases = JSON.parse(e.aliases || '[]'); } catch { /* ignore */ }
+            return { ...e, aliases };
+        });
+        res.json({ entities: parsed });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/wiki/entity/:id
+app.get('/api/wiki/entity/:id', (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) {
+            return res.status(400).json({ error: 'Invalid entity id' });
+        }
+        const entity = getEntity(id);
+        if (!entity) return res.status(404).json({ error: 'Entity not found' });
+        res.json(entity);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/wiki/ingest/:lectureId — manually ingest one lecture (dev/debug; auto-ingest covers normal flow)
+app.post('/api/wiki/ingest/:lectureId', async (req, res) => {
+    try {
+        const lectureId = Number(req.params.lectureId);
+        if (!Number.isInteger(lectureId) || lectureId <= 0) {
+            return res.status(400).json({ error: 'Invalid lecture id' });
+        }
+        const force = req.query.force === '1' || req.body?.force === true;
+        const result = await ingestLecture(lectureId, { force });
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/wiki/rebuild — SSE stream of rebuild progress.
+// Body: { courseId?: number }  — omit for full library rebuild.
+app.post('/api/wiki/rebuild', async (req, res) => {
+    const { courseId } = req.body || {};
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+    });
+    try {
+        if (courseId) {
+            const cid = Number(courseId);
+            const result = await rebuildCourse(cid, (event) => {
+                res.write(`data: ${JSON.stringify(event)}\n\n`);
+            });
+            res.write(`data: ${JSON.stringify({ type: 'done', ...result })}\n\n`);
+        } else {
+            // Full rebuild: walk every course, rebuilding sequentially.
+            const db = getDb();
+            const courses = db.prepare('SELECT id, title FROM courses ORDER BY title').all();
+            let totalProcessed = 0;
+            let totalFailed = 0;
+            for (let i = 0; i < courses.length; i++) {
+                const c = courses[i];
+                res.write(`data: ${JSON.stringify({ type: 'course', current: i + 1, total: courses.length, course: c.title })}\n\n`);
+                try {
+                    const r = await rebuildCourse(c.id, (event) => {
+                        res.write(`data: ${JSON.stringify(event)}\n\n`);
+                    });
+                    totalProcessed += r.processed;
+                    totalFailed += r.failed;
+                } catch (err) {
+                    totalFailed++;
+                    res.write(`data: ${JSON.stringify({ type: 'error', course: c.title, error: err.message })}\n\n`);
+                }
+            }
+            res.write(`data: ${JSON.stringify({ type: 'done', processed: totalProcessed, failed: totalFailed })}\n\n`);
+        }
+    } catch (err) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
+    } finally {
+        res.end();
+    }
+});
+
+// POST /api/wiki/lint — run lint and return findings
+app.post('/api/wiki/lint', (req, res) => {
+    try {
+        res.json(wikiLint());
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/wiki/log — recent wiki_log entries (for UI debug panel)
+app.get('/api/wiki/log', (req, res) => {
+    try {
+        const limit = Math.min(Number(req.query.limit) || 50, 500);
+        res.json({ entries: wikiRecentLog(limit) });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// =============================================================================
 // Teachable Course Management
 // =============================================================================
 
@@ -721,7 +837,8 @@ app.get('/api/courses', (req, res) => {
     const courses = db.prepare(`
         SELECT c.*,
                (SELECT COUNT(*) FROM course_lectures WHERE course_id = c.id) as lecture_count,
-               (SELECT COUNT(*) FROM course_chunks cc JOIN course_lectures cl ON cc.lecture_id = cl.id WHERE cl.course_id = c.id) as chunk_count
+               (SELECT COUNT(*) FROM course_chunks cc JOIN course_lectures cl ON cc.lecture_id = cl.id WHERE cl.course_id = c.id) as chunk_count,
+               (SELECT COUNT(*) FROM transcripts t JOIN sources s ON t.source_id = s.id WHERE s.course_id = c.id AND t.lecture_id IS NULL) as orphan_transcript_count
         FROM courses c ORDER BY c.title
     `).all();
     res.json(courses);
@@ -762,6 +879,17 @@ app.post('/api/courses/scrape', async (req, res) => {
             res.write(`data: ${JSON.stringify({ message, pct })}\n\n`);
         }, { forceRefresh });
         res.write(`data: ${JSON.stringify({ done: true, ...result })}\n\n`);
+
+        // Auto-ingest: kick off wiki extraction in the background for any lecture
+        // whose chunks are newer than its last wiki_ingested_at. Fire-and-forget;
+        // errors are logged to wiki_log but never thrown back to the scrape caller.
+        ingestPending({ courseId: result.courseId })
+            .then(summary => {
+                if (summary.total > 0) {
+                    console.log(`[wiki] auto-ingested course ${result.courseId}: ${summary.processed}/${summary.total} ok, ${summary.failed} failed`);
+                }
+            })
+            .catch(err => console.error('[wiki] auto-ingest crashed:', err.message));
     } catch (err) {
         res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
     }
@@ -857,6 +985,53 @@ app.get('/api/courses/lectures/:id', (req, res) => {
     ).all(req.params.id);
 
     res.json({ ...lecture, chunks, content: chunks.map(c => c.content).join('\n\n---\n\n') });
+});
+
+// GET /api/courses/lectures/:id/transcripts
+// Returns legacy imported transcripts that have been FK-linked to this
+// scraped lecture (transcripts.lecture_id = :id). Used by the sidebar to
+// render "Transcript" child nodes under each lecture.
+app.get('/api/courses/lectures/:id/transcripts', (req, res) => {
+    const db = getDb();
+    const lectureId = Number(req.params.id);
+    if (!Number.isInteger(lectureId) || lectureId <= 0) {
+        return res.status(400).json({ error: 'Invalid lecture id' });
+    }
+    const transcripts = db.prepare(`
+        SELECT t.id, t.source_id, t.lecture, t.filename, t.transcript_type,
+               t.lecture_date, t.duration_minutes,
+               s.name AS source_name,
+               LENGTH(t.content) AS content_length
+        FROM transcripts t
+        JOIN sources s ON t.source_id = s.id
+        WHERE t.lecture_id = ?
+        ORDER BY t.transcript_type ASC, t.filename ASC
+    `).all(lectureId);
+    res.json(transcripts);
+});
+
+// GET /api/courses/:courseId/orphan-transcripts
+// Returns transcripts whose source is matched to this course (sources.course_id
+// = :courseId) but the transcript itself has no specific lecture link
+// (transcripts.lecture_id IS NULL). Rendered as "Other Transcripts" under the
+// course node in the sidebar.
+app.get('/api/courses/:courseId/orphan-transcripts', (req, res) => {
+    const db = getDb();
+    const courseId = Number(req.params.courseId);
+    if (!Number.isInteger(courseId) || courseId <= 0) {
+        return res.status(400).json({ error: 'Invalid course id' });
+    }
+    const transcripts = db.prepare(`
+        SELECT t.id, t.source_id, t.lecture, t.filename, t.transcript_type,
+               t.lecture_date, t.duration_minutes,
+               s.name AS source_name,
+               LENGTH(t.content) AS content_length
+        FROM transcripts t
+        JOIN sources s ON t.source_id = s.id
+        WHERE s.course_id = ? AND t.lecture_id IS NULL
+        ORDER BY t.lecture ASC, t.transcript_type ASC, t.filename ASC
+    `).all(courseId);
+    res.json(transcripts);
 });
 
 // Phase 5: GET /api/courses/lectures/:id/videos
@@ -1003,11 +1178,13 @@ app.get('/api/courses/:id/sections', (req, res) => {
     `).all(req.params.id);
     if (includeLectures) {
         const lecturesByCourse = db.prepare(`
-            SELECT id, section_id, title, class_number, position, duration, video_provider, video_local_path
-            FROM course_lectures
-            WHERE course_id = ?
-              AND (removed_at IS NULL OR removed_at = '')
-            ORDER BY section_id, position
+            SELECT cl.id, cl.section_id, cl.title, cl.class_number, cl.position, cl.duration,
+                   cl.video_provider, cl.video_local_path,
+                   (SELECT COUNT(*) FROM transcripts WHERE lecture_id = cl.id) as transcript_count
+            FROM course_lectures cl
+            WHERE cl.course_id = ?
+              AND (cl.removed_at IS NULL OR cl.removed_at = '')
+            ORDER BY cl.section_id, cl.position
         `).all(req.params.id);
         const bySection = new Map();
         for (const lec of lecturesByCourse) {

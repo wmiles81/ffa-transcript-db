@@ -216,14 +216,19 @@ html {
   font-size: 15px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  height: 100%;
 }
 
 body {
   font-family: var(--font-sans);
   background: var(--bg-primary);
   color: var(--text-primary);
-  min-height: 100vh;
+  height: 100%;
   line-height: 1.6;
+  /* App-style layout: the whole viewport is bounded so #app's flex children
+     (sidebar + content) can each own their own scroll. min-height-only here
+     would let the page grow with content and break per-pane scrolling. */
+  overflow: hidden;
 }
 
 /* --- Scrollbar --- */
@@ -249,7 +254,7 @@ body {
 #app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100%;
 }
 
 /* --- Header --- */
@@ -2207,7 +2212,7 @@ body.resizing {
   font-size: 0.78rem;
 }
 
-.transcripts-toggle {
+.unassigned-toggle {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2221,17 +2226,24 @@ body.resizing {
   text-align: left;
 }
 
-.transcripts-toggle:hover {
+.unassigned-toggle:hover {
   color: var(--text-primary);
 }
 
-.transcripts-toggle-chevron {
+.unassigned-toggle-chevron {
   display: inline-block;
   transition: transform 0.15s ease;
 }
 
-.transcripts-toggle[aria-expanded="true"] .transcripts-toggle-chevron {
+.unassigned-toggle[aria-expanded="true"] .unassigned-toggle-chevron {
   transform: rotate(90deg);
+}
+
+.unassigned-toggle[data-count]:not([data-count="0"])::after {
+  content: " (" attr(data-count) ")";
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin-left: 4px;
 }
 
 /* =============================================================================
@@ -2407,17 +2419,22 @@ body.splash-active {
 }
 
 /* Phase 5/6: Inline video player on lecture detail view */
-/* Phase 7: .lecture-player-wrap is user-resizable (vertical).
-   aspect-ratio gives a nice 16:9 default; once the user drags
-   the resize handle the browser sets an inline height which takes
-   precedence over the computed aspect-ratio height. */
+/* Phase 7: .lecture-player-wrap is user-resizable on both axes.
+   aspect-ratio gives a nice 16:9 default; once the user drags the corner
+   handle the browser sets inline width/height which take precedence over
+   the computed aspect-ratio. */
 .lecture-player-wrap {
-  margin: 0 0 1.25rem;
-  width: 100%;
+  /* margin: 0 auto centers horizontally when the box is narrower than its
+     parent — works at the 960px default AND after the user drags it smaller.
+     No max-width on the box itself: the user's inline width (set by `resize:
+     both` dragging) needs to be able to grow beyond the default. */
+  margin: 0 auto 1.25rem;
+  width: min(960px, 100%);
   aspect-ratio: 16 / 9;
+  min-width: 280px;
   min-height: 200px;
-  max-height: 80vh;
-  resize: vertical;
+  max-height: 85vh;
+  resize: both;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -2518,4 +2535,266 @@ body.splash-active {
   background: var(--accent-glow-strong);
   color: var(--accent-light);
   text-decoration: none;
+}
+
+/* =============================================================================
+   Phase 5 — LLM Wiki tab
+   ========================================================================= */
+
+.wiki-nav {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.wiki-nav li {
+  margin: 0;
+}
+.wiki-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.12s;
+}
+.wiki-nav-item:hover {
+  background: var(--bg-hover);
+}
+.wiki-nav-item.active {
+  background: var(--accent-glow);
+  color: var(--accent-light);
+}
+.wiki-nav-count {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.wiki-nav-item.active .wiki-nav-count {
+  background: var(--accent-primary);
+  color: var(--bg-primary);
+}
+
+#wiki-view {
+  padding: 0 20px 40px;
+}
+.wiki-meta {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-left: 12px;
+}
+.wiki-loading {
+  color: var(--text-muted);
+  padding: 30px;
+  text-align: center;
+}
+.wiki-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted);
+}
+.wiki-empty-hint {
+  font-size: 0.85rem;
+  margin-top: 6px;
+}
+.wiki-empty-inner {
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 8px 0;
+}
+
+.wiki-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+.wiki-card {
+  display: block;
+  text-align: left;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: border-color 0.12s, transform 0.12s;
+  color: var(--text-primary);
+  font: inherit;
+}
+.wiki-card:hover {
+  border-color: var(--accent-primary);
+  transform: translateY(-1px);
+}
+.wiki-card-name {
+  font-weight: 600;
+  font-size: 1rem;
+  margin-bottom: 4px;
+}
+.wiki-card-aliases {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.wiki-card-summary {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-bottom: 10px;
+}
+.wiki-card-counts {
+  display: flex;
+  gap: 12px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.wiki-entity {
+  max-width: 760px;
+  padding-top: 10px;
+}
+.wiki-back-link {
+  display: inline-block;
+  color: var(--accent-primary);
+  text-decoration: none;
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+}
+.wiki-back-link:hover {
+  text-decoration: underline;
+}
+.wiki-entity-aliases {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.wiki-entity-summary {
+  font-size: 1rem;
+  line-height: 1.55;
+  margin-bottom: 20px;
+  padding: 12px 14px;
+  background: var(--bg-elevated);
+  border-left: 3px solid var(--accent-primary);
+  border-radius: 4px;
+}
+.wiki-section-heading {
+  margin: 24px 0 10px;
+  font-size: 1rem;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 4px;
+}
+.wiki-note {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.wiki-note-body {
+  font-size: 0.92rem;
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+.wiki-note-sources {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.wiki-source-link {
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+.wiki-source-link:hover {
+  text-decoration: underline;
+}
+.wiki-claim {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.wiki-claim.has-contradictions {
+  border-color: #b35a00;
+  background: rgba(179, 90, 0, 0.08);
+}
+.wiki-claim-text {
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.wiki-claim-supports,
+.wiki-claim-contradicts {
+  font-size: 0.83rem;
+  margin-top: 6px;
+  color: var(--text-secondary);
+}
+.wiki-claim-contradicts {
+  color: #d97a3a;
+}
+.wiki-claim-supports ul,
+.wiki-claim-contradicts ul {
+  margin: 4px 0 0 18px;
+  padding: 0;
+}
+.wiki-lint {
+  max-width: 760px;
+  padding-top: 10px;
+}
+.wiki-lint-summary {
+  padding: 10px 14px;
+  background: var(--bg-elevated);
+  border-radius: 6px;
+  margin-bottom: 20px;
+  font-size: 0.9rem;
+}
+.wiki-lint-section {
+  margin-bottom: 24px;
+}
+.wiki-lint-section h3 {
+  font-size: 0.95rem;
+  margin: 0 0 8px;
+  color: var(--text-primary);
+}
+.wiki-lint-section ul {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+.wiki-lint-kind {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+.wiki-rebuild-error {
+  color: #d97a3a;
+  font-size: 0.85rem;
+  padding: 4px 0;
+}
+
+/* =============================================================================
+   Version badge — internal build identifier in the header
+   ========================================================================= */
+.version-badge {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin-right: 4px;
+  user-select: text;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: color 0.12s;
+}
+.version-badge:hover {
+  color: var(--text-primary);
 }
