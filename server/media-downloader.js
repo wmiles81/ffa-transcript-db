@@ -17,15 +17,14 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
         return { skipped: true, reason: `provider ${lecture.video_provider} not handled by this module` };
     }
 
-    // Multi-video idempotency: skip only if we have BOTH a complete recorded path-set
-    // AND every file is actually on disk. A single-path archive (legacy / pre-multi-video)
-    // is treated as INCOMPLETE so the Puppeteer dwell runs and discovers any additional
-    // videos that may live on the same lecture page. The inner per-file skip below
-    // prevents re-downloading files that are already present.
+    // Idempotency: trust any complete N≥1 recorded path-set with all files on
+    // disk. Single-path records used to be treated as incomplete (re-dwell
+    // every run), but once a course has been re-archived under the multi-video
+    // code the record is authoritative. Force-rescrape or force=true busts it.
     if (!force && lecture.video_local_paths) {
         try {
             const recorded = JSON.parse(lecture.video_local_paths);
-            if (Array.isArray(recorded) && recorded.length >= 2) {
+            if (Array.isArray(recorded) && recorded.length >= 1) {
                 const allExist = recorded.every(p => {
                     try { return fs.existsSync(resolveRelative(p)); } catch { return false; }
                 });
@@ -51,6 +50,16 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
         }
     });
 
+    // The scraper records the iframe embed IDs in DOM order. If they're absent
+    // (legacy row from before this fix) we'll re-extract from the page below.
+    let domEmbedIds = [];
+    try {
+        if (lecture.video_embed_ids) {
+            const parsed = JSON.parse(lecture.video_embed_ids);
+            if (Array.isArray(parsed)) domEmbedIds = parsed.filter(Boolean);
+        }
+    } catch { /* fall through */ }
+
     try {
         try {
             await page.goto(lectureUrl, { waitUntil: 'networkidle2', timeout: NAVIGATE_TIMEOUT_MS });
@@ -58,8 +67,39 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
             return { error: 'Navigation failed', details: err.message };
         }
 
-        onProgress(`Waiting ${HLS_DWELL_MS / 1000}s for player to load manifest...`, 5);
-        await new Promise((r) => setTimeout(r, HLS_DWELL_MS));
+        // Always re-read iframe embed IDs from the live page so the archiver
+        // doesn't rely on stale scraper output. If the lecture row has IDs
+        // recorded, they take precedence for the eventual ordering.
+        const liveEmbedIds = await page.evaluate(() => {
+            const frames = document.querySelectorAll('iframe[src*="hotmart"], iframe[src*="cf-embed"], iframe[src*="player.hotmart"]');
+            return [...frames].map(f => {
+                const src = f.src || '';
+                const m = src.match(/\/embed\/([A-Za-z0-9_-]+)/);
+                return m ? m[1] : null;
+            }).filter(Boolean);
+        }).catch(() => []);
+        if (domEmbedIds.length === 0) domEmbedIds = liveEmbedIds;
+
+        if (liveEmbedIds.length > 1) {
+            // Scroll each iframe into view in DOM order so the embedded players
+            // load their manifests sequentially — keeps capture order
+            // deterministic instead of racing on page settle.
+            onProgress(`Found ${liveEmbedIds.length} video embeds — scanning in document order...`, 3);
+            const PER_IFRAME_DWELL = 6000;
+            for (let i = 0; i < liveEmbedIds.length; i++) {
+                try {
+                    await page.evaluate((idx) => {
+                        const fs = document.querySelectorAll('iframe[src*="hotmart"], iframe[src*="cf-embed"], iframe[src*="player.hotmart"]');
+                        if (fs[idx]) fs[idx].scrollIntoView({ block: 'center', behavior: 'instant' });
+                    }, i);
+                } catch { /* page navigated away */ }
+                onProgress(`Scanning video ${i + 1}/${liveEmbedIds.length}...`, 3 + Math.round((i / liveEmbedIds.length) * 6));
+                await new Promise(r => setTimeout(r, PER_IFRAME_DWELL));
+            }
+        } else {
+            onProgress(`Waiting ${HLS_DWELL_MS / 1000}s for player to load manifest...`, 5);
+            await new Promise((r) => setTimeout(r, HLS_DWELL_MS));
+        }
     } finally {
         await browser.close();
     }
@@ -68,11 +108,9 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
         return { error: 'No HLS manifest captured within dwell window' };
     }
 
-    // Dedupe by URL pathname — different videos have different paths; quality variants
-    // of the same video share the same parent directory path.
-    // Strategy: group by parent directory of the .m3u8 URL and keep only the first
-    // captured URL per parent. For Hotmart, each distinct video lives in a distinct
-    // CDN directory, so one entry per directory = one master playlist per video.
+    // Dedupe by URL parent directory (quality variants of one video share a
+    // parent path on Hotmart's CDN). Keep insertion order so document-order
+    // scrolling translates to ordered downloads.
     const byParent = new Map();
     for (const m of manifests) {
         try {
@@ -158,7 +196,9 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
     const totalDuration = durationsSec.reduce((sum, d) => sum + (d || 0), 0);
     const firstPath = downloadedPaths[0];
 
-    // Persist to DB — update both the legacy single-path column and the new array column
+    // Persist to DB — update legacy single-path, the array column, and (when we
+    // re-extracted embed IDs from the page) the embed-id sequence so the
+    // archiver's source of truth stays consistent with what we just downloaded.
     const db = getDb();
     db.prepare(`
         UPDATE course_lectures
@@ -168,6 +208,10 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
             video_downloaded_at = ?
         WHERE id = ?
     `).run(firstPath, JSON.stringify(downloadedPaths), totalDuration || null, new Date().toISOString(), lecture.id);
+    if (domEmbedIds.length > 0) {
+        db.prepare('UPDATE course_lectures SET video_embed_ids = ? WHERE id = ?')
+            .run(JSON.stringify(domEmbedIds), lecture.id);
+    }
 
     onProgress(
         `Downloaded ${downloadedPaths.length} video(s), ${(totalSize / 1024 / 1024).toFixed(1)} MB total${totalDuration ? ` (${totalDuration}s of video)` : ''}`,

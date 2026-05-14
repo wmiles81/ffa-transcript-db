@@ -420,6 +420,8 @@ async function loadTranscriptDetail(id, highlightQuery) {
                 course_id: lecture.course_id,
                 lectureId: lecId,
                 videos,
+                // Chunks carry video_index so the UI can filter by active tab.
+                chunks: lecture.chunks || [],
             };
             renderTranscriptDetail(transcript, highlightQuery);
             switchView('detail');
@@ -1413,44 +1415,60 @@ function renderSearchResults(results) {
 }
 
 function renderTranscriptDetail(transcript, highlightQuery) {
-    let content = escapeHtml(transcript.content);
-
-    // Phase 6: clickable timestamps — supports [HH:MM:SS] and [MM:SS] (and [H:MM:SS])
     const hasPlayer = transcript.videos && transcript.videos.length > 0;
-    content = content.replace(
-        /\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]/g,
-        (match, p1, p2, p3) => {
-            const seconds = p3 != null
-                ? Number(p1) * 3600 + Number(p2) * 60 + Number(p3)
-                : Number(p1) * 60 + Number(p2);
-            if (!hasPlayer) {
-                // No video available — keep the legacy span styling
-                return `<span class="timestamp">${match}</span>`;
+
+    // For multi-video lectures, the visible transcript is filtered by the
+    // active video tab. Chunks carry video_index (0-based), matching the tab
+    // index. If no chunks have video_index (legacy/pre-fix data or
+    // single-video lecture), show the whole transcript like before.
+    function rawTextForVideo(videoIndex) {
+        const chunks = Array.isArray(transcript.chunks) ? transcript.chunks : [];
+        if (chunks.length > 0 && transcript.videos && transcript.videos.length > 1) {
+            const taggedChunks = chunks.filter(c => c.video_index !== null && c.video_index !== undefined);
+            if (taggedChunks.length > 0) {
+                const filtered = taggedChunks.filter(c => c.video_index === videoIndex);
+                if (filtered.length > 0) {
+                    return filtered
+                        .sort((a, b) => (a.position || 0) - (b.position || 0))
+                        .map(c => c.content)
+                        .join('\n\n---\n\n');
+                }
             }
-            return `<a class="timestamp-link" data-seconds="${seconds}" href="#" title="Seek to ${match}">${match}</a>`;
         }
-    );
-
-    // Highlight speaker names (Name: pattern at start of line or after newline)
-    content = content.replace(
-        /^([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s*:/gm,
-        '<span class="speaker">$1:</span>'
-    );
-
-    // Highlight search terms if present
-    if (highlightQuery) {
-        const terms = highlightQuery.split(/\s+/).filter(t => t.length > 1);
-        for (const term of terms) {
-            const regex = new RegExp(`(${escapeRegex(term)})`, 'gi');
-            content = content.replace(regex, '<mark>$1</mark>');
-        }
+        return transcript.content || '';
     }
 
-    // Linkify URLs (after all other replacements, so we don't double-process)
-    content = content.replace(
-        /(https?:\/\/[^\s<>"]+)/g,
-        '<a href="$1" target="_blank" rel="noopener noreferrer" class="content-link">$1</a>'
-    );
+    function decorateContent(rawText) {
+        let html = escapeHtml(rawText);
+        html = html.replace(
+            /\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]/g,
+            (match, p1, p2, p3) => {
+                const seconds = p3 != null
+                    ? Number(p1) * 3600 + Number(p2) * 60 + Number(p3)
+                    : Number(p1) * 60 + Number(p2);
+                if (!hasPlayer) return `<span class="timestamp">${match}</span>`;
+                return `<a class="timestamp-link" data-seconds="${seconds}" href="#" title="Seek to ${match}">${match}</a>`;
+            }
+        );
+        html = html.replace(
+            /^([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s*:/gm,
+            '<span class="speaker">$1:</span>'
+        );
+        if (highlightQuery) {
+            const terms = highlightQuery.split(/\s+/).filter(t => t.length > 1);
+            for (const term of terms) {
+                const regex = new RegExp(`(${escapeRegex(term)})`, 'gi');
+                html = html.replace(regex, '<mark>$1</mark>');
+            }
+        }
+        html = html.replace(
+            /(https?:\/\/[^\s<>"]+)/g,
+            '<a href="$1" target="_blank" rel="noopener noreferrer" class="content-link">$1</a>'
+        );
+        return html;
+    }
+
+    let content = decorateContent(rawTextForVideo(0));
 
     // Detect the first Notion URL in the raw content for the "Set Notion URL" button
     const notionMatch = transcript.content?.match(/https?:\/\/[^\s]*notion\.site\/[^\s]*/);
@@ -1579,8 +1597,10 @@ function renderTranscriptDetail(transcript, highlightQuery) {
             });
         });
 
-        // Phase 6: tab clicks → switch player src
-        el.transcriptDetail.querySelectorAll('.lecture-player-tab').forEach(tab => {
+        // Phase 6: tab clicks → switch player src AND swap visible transcript
+        // to the chunks tagged with the matching video_index.
+        const detailContentEl = el.transcriptDetail.querySelector('.detail-content');
+        el.transcriptDetail.querySelectorAll('.lecture-player-tab').forEach((tab, tabIndex) => {
             tab.addEventListener('click', () => {
                 const file = tab.dataset.file;
                 if (!file) return;
@@ -1591,6 +1611,23 @@ function renderTranscriptDetail(transcript, highlightQuery) {
                     t.classList.toggle('active', t === tab)
                 );
                 applyRate(); // src change resets playbackRate
+
+                // Swap transcript to the chunks for this video index.
+                if (detailContentEl) {
+                    detailContentEl.innerHTML = decorateContent(rawTextForVideo(tabIndex));
+                    // Re-bind timestamp links for the new content
+                    detailContentEl.querySelectorAll('.timestamp-link').forEach(link => {
+                        link.addEventListener('click', (ev) => {
+                            ev.preventDefault();
+                            const s = Number(link.dataset.seconds);
+                            if (Number.isFinite(s)) {
+                                player.currentTime = s;
+                                player.play().catch(() => {});
+                                applyRate();
+                            }
+                        });
+                    });
+                }
             });
         });
     }

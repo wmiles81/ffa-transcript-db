@@ -549,91 +549,113 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }, options = 
                         WHERE id = ?
                     `).run(metadata.video_url, metadata.video_provider, metadata.notion_url, lectureId);
 
-                    // 1) Try downloading .txt file attachments first
-                    let textContent = '';
-                    const downloadUrls = await page.evaluate(() => {
-                        const links = [...document.querySelectorAll('a.download')];
-                        return links
-                            .map(a => a.href)
-                            .filter(href => href && href.endsWith('.txt'));
+                    // Multi-video transcript extraction: walk .lecture-attachment in DOM order,
+                    // segmenting by Hotmart video iframes. Each video carries the text
+                    // attachments that follow it (and the .txt download, when present)
+                    // until the next video — so a 3-video / 3-transcript page produces
+                    // three segments tagged with video_index 0, 1, 2.
+                    const segmentsRaw = await page.evaluate(() => {
+                        const root = document.querySelector('.lecture-content, .course-mainbar, main') || document.body;
+                        const attachments = [...root.querySelectorAll('.lecture-attachment')];
+                        const segments = []; // { videoIndex, embedId, downloadUrl, text }
+                        let current = null;
+                        let videoSlot = -1;
+
+                        for (const att of attachments) {
+                            const cls = att.className || '';
+                            if (cls.includes('lecture-attachment-type-video')) {
+                                videoSlot += 1;
+                                const iframe = att.querySelector('iframe[src*="hotmart"], iframe[src*="player.hotmart"]');
+                                const src = iframe?.getAttribute('src') || '';
+                                const m = src.match(/\/embed\/([A-Za-z0-9_-]+)/);
+                                current = {
+                                    videoIndex: videoSlot,
+                                    embedId: m ? m[1] : null,
+                                    src: src || null,
+                                    downloadUrl: null,
+                                    text: '',
+                                };
+                                segments.push(current);
+                            } else if (cls.includes('lecture-attachment-type-file')) {
+                                const link = att.querySelector('a.download[href$=".txt"]');
+                                if (link && current) current.downloadUrl = link.href;
+                            } else if (cls.includes('lecture-attachment-type-text')) {
+                                const textBox = att.querySelector('.lecture-text-container, .fr-view, .trix-content, .ql-editor') || att;
+                                const t = (textBox.innerText || '').trim();
+                                if (t.length === 0) continue;
+                                if (current) {
+                                    current.text = current.text ? `${current.text}\n\n${t}` : t;
+                                } else {
+                                    segments.push({ videoIndex: null, embedId: null, src: null, downloadUrl: null, text: t });
+                                }
+                            }
+                        }
+
+                        // No .lecture-attachment containers at all — fall back to the
+                        // original "grab whatever transcript selector matches first" pass
+                        // so older course pages don't regress.
+                        if (segments.length === 0) {
+                            const fallbackSelectors = ['.fr-view', '.lecture-text-container', '.trix-content', '.ql-editor'];
+                            for (const sel of fallbackSelectors) {
+                                const els = [...root.querySelectorAll(sel)];
+                                const texts = els.map(el => (el.innerText || '').trim()).filter(t => t.length > 20);
+                                if (texts.length > 0) {
+                                    segments.push({ videoIndex: null, embedId: null, src: null, downloadUrl: null, text: texts.join('\n\n---\n\n') });
+                                    break;
+                                }
+                            }
+                        }
+
+                        return segments;
                     });
 
-                    if (downloadUrls.length > 0) {
-                        // Fetch each .txt file content
-                        const fileTexts = [];
-                        for (const url of downloadUrls) {
-                            try {
-                                const content = await page.evaluate(async (fileUrl) => {
-                                    const res = await fetch(fileUrl);
-                                    if (!res.ok) return null;
-                                    return await res.text();
-                                }, url);
-                                if (content && content.trim().length > 10) {
-                                    fileTexts.push(content.trim());
-                                }
-                            } catch (dlErr) {
-                                // Skip failed downloads
+                    // Prefer .txt download contents over scraped innerText (cleaner, no
+                    // UI chrome). Falls back to the scraped text if the download fails.
+                    for (const seg of segmentsRaw) {
+                        if (!seg.downloadUrl) continue;
+                        try {
+                            const content = await page.evaluate(async (fileUrl) => {
+                                const res = await fetch(fileUrl);
+                                if (!res.ok) return null;
+                                return await res.text();
+                            }, seg.downloadUrl);
+                            if (content && content.trim().length > 10) {
+                                seg.text = content.trim();
                             }
-                        }
-                        if (fileTexts.length > 0) {
-                            textContent = fileTexts.join('\n\n---\n\n');
-                        }
+                        } catch { /* keep scraped fallback */ }
                     }
 
-                    // 2) Fallback: scrape page text if no .txt downloads found
-                    if (!textContent) {
-                        textContent = await page.evaluate(() => {
-                            const selectorGroups = [
-                                ['.fr-view'],
-                                ['.lecture-text-container'],
-                                ['.trix-content'],
-                                ['.ql-editor'],
-                                ['.lecture-attachment .text-attachment'],
-                                ['[class*="text-block"]'],
-                                ['.lecture-content'],
-                                ['.lecture-attachment'],
-                            ];
-
-                            let texts = [];
-                            for (const group of selectorGroups) {
-                                for (const sel of group) {
-                                    document.querySelectorAll(sel).forEach(el => {
-                                        const text = el.innerText?.trim();
-                                        if (text && text.length > 20) texts.push(text);
-                                    });
-                                }
-                                if (texts.length > 0) break;
-                            }
-
-                            const deduped = [];
-                            for (const t of texts) {
-                                const dominated = deduped.some(existing => existing.includes(t));
-                                if (!dominated) {
-                                    for (let i = deduped.length - 1; i >= 0; i--) {
-                                        if (t.includes(deduped[i])) deduped.splice(i, 1);
-                                    }
-                                    deduped.push(t);
-                                }
-                            }
-                            return deduped.join('\n\n---\n\n');
-                        });
-                    }
-
-                    if (textContent && textContent.length > 10) {
+                    // Persist segments. Each segment's text is chunked independently;
+                    // video_index tags every chunk so the UI can filter per active tab.
+                    const segmentsWithText = segmentsRaw.filter(s => s.text && s.text.length > 10);
+                    if (segmentsWithText.length > 0) {
                         // Phase 3.1: For new lectures this DELETE is a no-op; for force-refresh it clears
                         // stale chunks before re-inserting. The DELETE is intentionally gated by the
-                        // text-length check: if a force-refresh fetches a lecture whose page returns
-                        // empty text (transient render bug, auth hiccup, etc.), we preserve the existing
-                        // chunks rather than dropping data we may not be able to recover. To force a
-                        // clean slate, the operator can re-run with forceRefresh once Teachable is
-                        // returning text again.
+                        // text-length check above — if a force-refresh fetches a lecture whose page
+                        // returns nothing, we preserve existing chunks rather than dropping data we
+                        // may not be able to recover.
                         db.prepare('DELETE FROM course_chunks WHERE lecture_id = ?').run(lectureId);
-                        const chunks = chunkText(textContent);
                         const ins = db.prepare(
-                            'INSERT INTO course_chunks (lecture_id, content, position) VALUES (?, ?, ?)'
+                            'INSERT INTO course_chunks (lecture_id, content, position, video_index) VALUES (?, ?, ?, ?)'
                         );
-                        for (let ci = 0; ci < chunks.length; ci++) {
-                            ins.run(lectureId, chunks[ci], ci);
+                        let globalPos = 0;
+                        for (const seg of segmentsWithText) {
+                            const chunks = chunkText(seg.text);
+                            for (const c of chunks) {
+                                ins.run(lectureId, c, globalPos, seg.videoIndex);
+                                globalPos += 1;
+                            }
+                        }
+
+                        // Persist the embed-id sequence so the archiver can match
+                        // captured manifests to specific iframes in document order.
+                        const embedIds = segmentsRaw
+                            .filter(s => s.videoIndex !== null)
+                            .sort((a, b) => a.videoIndex - b.videoIndex)
+                            .map(s => s.embedId);
+                        if (embedIds.length > 0 && embedIds.some(id => id)) {
+                            db.prepare('UPDATE course_lectures SET video_embed_ids = ? WHERE id = ?')
+                                .run(JSON.stringify(embedIds), lectureId);
                         }
                     }
                 } catch (err) {
