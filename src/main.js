@@ -1725,17 +1725,15 @@ function renderTranscriptDetail(transcript, highlightQuery) {
     const rescrapeBtn = isCourseLecture
         ? `<button class="rescrape-transcript-btn" data-lecture-id="${escapeHtml(String(transcript.lectureId))}" title="Re-fetch the lecture page and re-segment the transcript per video. Useful when a multi-video lecture's transcript text is concatenated together (video_index NULL on chunks) instead of split per tab.">Re-scrape transcript</button>`
         : '';
-    // Re-order videos button is HIDDEN. The algorithm matches captured m3u8
-    // manifests to expected durations probed from those manifests — but
-    // Hotmart returns manifests in non-deterministic order across runs, so
-    // "captured order" isn't actually DOM order and the resulting rename
-    // plan is wrong in unpredictable ways. Restoring this requires a
-    // deterministic mapping from each captured manifest to its source
-    // iframe's embed_id; that's a real engineering effort and not shipped
-    // yet. Until then the only safe fix for a mis-ordered lecture is a
-    // manual rename or a fresh archive-from-scratch with shift-click.
-    const reorderBtn = '';
-    void hasMultipleVideos;
+    // Re-order videos button. With the embed-id matching now in place
+    // (media-downloader pairs each captured m3u8 with its iframe's embed
+    // request), the matcher's "expected durations" are now in true DOM
+    // order, so the rename plan is deterministic. Still gated behind a
+    // dry-run confirm dialog and the idempotency guard — see
+    // reorderLectureVideosByDom for the safety chain.
+    const reorderBtn = hasMultipleVideos
+        ? `<button class="reorder-videos-btn" data-lecture-id="${escapeHtml(String(transcript.lectureId))}" title="Repair file ordering for a legacy multi-video archive (downloaded before deterministic embed-id matching). Captures fresh DOM-ordered manifests, probes their expected durations, and renames the existing mp4s in place so Video N's file matches Video N's transcript. Click for a dry-run preview; nothing is renamed until you confirm.">Re-order videos</button>`
+        : '';
 
     el.transcriptDetail.innerHTML = `
     <div class="detail-header">

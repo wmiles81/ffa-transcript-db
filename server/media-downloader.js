@@ -42,12 +42,33 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
 
     onProgress(`Opening lecture page (${lectureUrl})...`, 0);
 
-    // Re-resolve master URL via Puppeteer — Hotmart manifest URLs are session-bound and short-lived
+    // Re-resolve master URL via Puppeteer — Hotmart manifest URLs are session-bound and short-lived.
+    //
+    // Capture two kinds of request as an ordered event stream:
+    //  • Iframe page loads at `…/embed/<embedId>` (the Hotmart player URL).
+    //    These tell us WHICH iframe is starting to load right now.
+    //  • The HLS master/variant playlists that follow (`.m3u8`). These get
+    //    attributed to the most recently seen embed_id, because that's the
+    //    iframe whose player is firing them.
+    //
+    // This replaces the previous "capture any .m3u8 in network order" approach,
+    // which produced non-deterministic file ordering for multi-video lectures
+    // (Hotmart's iframes load asynchronously). With the event stream + embed
+    // attribution, masterList ends up in DOM order regardless of player race
+    // conditions on page load.
     const { browser, page } = await createAuthenticatedBrowser();
-    const manifests = [];
+    const events = []; // ordered: { type: 'embed'|'m3u8', embedId?, url, headers }
     page.on('request', (req) => {
-        if (req.url().toLowerCase().includes('.m3u8')) {
-            manifests.push({ url: req.url(), headers: req.headers() });
+        const url = req.url();
+        if (url.includes('hotmart')) {
+            const embedMatch = url.match(/\/embed\/([A-Za-z0-9_-]+)(?:[/?#]|$)/);
+            if (embedMatch) {
+                events.push({ type: 'embed', embedId: embedMatch[1], url, headers: req.headers() });
+                return;
+            }
+        }
+        if (url.toLowerCase().includes('.m3u8')) {
+            events.push({ type: 'm3u8', url, headers: req.headers() });
         }
     });
 
@@ -114,26 +135,68 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
         await browser.close().catch(() => { /* ignore — may already be closed by abort handler */ });
     }
 
-    if (manifests.length === 0) {
+    if (events.filter(e => e.type === 'm3u8').length === 0) {
         return { error: 'No HLS manifest captured within dwell window' };
     }
 
-    // Dedupe by URL parent directory (quality variants of one video share a
-    // parent path on Hotmart's CDN). Keep insertion order so document-order
-    // scrolling translates to ordered downloads.
-    const byParent = new Map();
-    for (const m of manifests) {
-        try {
-            const u = new URL(m.url);
-            const fullPath = `${u.origin}${u.pathname}`;
-            const parent = fullPath.substring(0, fullPath.lastIndexOf('/'));
-            if (!byParent.has(parent)) byParent.set(parent, m);
-        } catch {
-            // malformed URL — skip
+    // Walk the event stream: every m3u8 belongs to the most recent /embed/<id>
+    // request, which is the iframe that fired it. This pairs each captured
+    // manifest with its source iframe deterministically, regardless of the
+    // network-event order between iframes.
+    const manifestsByEmbed = new Map();
+    let currentEmbedId = null;
+    for (const ev of events) {
+        if (ev.type === 'embed') {
+            currentEmbedId = ev.embedId;
+            if (!manifestsByEmbed.has(currentEmbedId)) manifestsByEmbed.set(currentEmbedId, []);
+        } else if (ev.type === 'm3u8' && currentEmbedId != null) {
+            manifestsByEmbed.get(currentEmbedId).push({ url: ev.url, headers: ev.headers });
         }
     }
 
-    const masterList = [...byParent.values()];
+    // Build the master list in DOM order using liveEmbedIds (a static-DOM
+    // querySelectorAll, so its order matches the page's actual layout). For
+    // each DOM slot, pick the first dedupe-by-parent manifest seen on that
+    // iframe's player. Slots with no captured manifest are skipped — the
+    // archive becomes sparse instead of misnaming files. Single-iframe and
+    // no-iframe pages fall back to a flat dedupe of all m3u8 events.
+    const masterList = []; // [{ url, headers, embedId, domIndex }]
+    if (liveEmbedIds.length > 0) {
+        for (let domIndex = 0; domIndex < liveEmbedIds.length; domIndex++) {
+            const embedId = liveEmbedIds[domIndex];
+            const m3u8s = manifestsByEmbed.get(embedId) || [];
+            if (m3u8s.length === 0) continue;
+            const byParent = new Map();
+            for (const m of m3u8s) {
+                try {
+                    const u = new URL(m.url);
+                    const parent = `${u.origin}${u.pathname.substring(0, u.pathname.lastIndexOf('/'))}`;
+                    if (!byParent.has(parent)) byParent.set(parent, m);
+                } catch { /* skip malformed URL */ }
+            }
+            const master = [...byParent.values()][0];
+            if (master) masterList.push({ ...master, embedId, domIndex });
+        }
+    } else {
+        const flat = events.filter(e => e.type === 'm3u8');
+        const byParent = new Map();
+        for (const m of flat) {
+            try {
+                const u = new URL(m.url);
+                const parent = `${u.origin}${u.pathname.substring(0, u.pathname.lastIndexOf('/'))}`;
+                if (!byParent.has(parent)) byParent.set(parent, m);
+            } catch { /* skip */ }
+        }
+        let i = 0;
+        for (const m of byParent.values()) {
+            masterList.push({ ...m, embedId: null, domIndex: i });
+            i++;
+        }
+    }
+
+    if (masterList.length === 0) {
+        return { error: 'No HLS manifest could be attributed to any iframe' };
+    }
     // Total-known signal: emit once with videoTotal so the UI can keep showing
     // "Video X/N" through the rest of the lecture instead of losing the count
     // after the next text message replaces it.
@@ -146,15 +209,23 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
 
     for (let i = 0; i < masterList.length; i++) {
         if (signal?.aborted) return { skipped: true, reason: 'aborted' };
-        const master = masterList[i];
-        const videoInfo = { videoIndex: i + 1, videoTotal: masterList.length };
+        const entry = masterList[i];
+        const master = { url: entry.url, headers: entry.headers };
+        const domIndex = entry.domIndex;
+        const videoInfo = { videoIndex: i + 1, videoTotal: masterList.length, domIndex };
         // Wrap onProgress so every ffmpeg-line callback gets tagged with the
         // current video's index — the orchestrator merges this into the SSE
         // event so the UI can render "Video N/M" for the whole download.
         const onProgressForVideo = (msg, pct) => onProgress(msg, pct, videoInfo);
 
-        // Naming: video.mp4 for the first (back-compat), video_2.mp4, video_3.mp4 for the rest
-        const filename = i === 0 ? 'video.mp4' : `video_${i + 1}.mp4`;
+        // Naming is by DOM index (the position of this iframe on the lecture
+        // page), not by capture order. If liveEmbedIds had a gap (some iframe
+        // produced no m3u8), the filename for the following DOM slot still
+        // reflects its true DOM position — so a 3-of-5 archive produces
+        // video.mp4 / video_3.mp4 / video_5.mp4 instead of squishing onto
+        // video.mp4 / video_2.mp4 / video_3.mp4 (which would misalign tabs
+        // with the per-video transcript chunks).
+        const filename = domIndex === 0 ? 'video.mp4' : `video_${domIndex + 1}.mp4`;
         const dest = path.join(dir, filename);
         // Atomic rename strategy — crash-safe idempotency
         const tmpDest = path.join(dir, `${filename}.partial`);
@@ -228,7 +299,7 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
                         filename = excluded.filename,
                         error_message = excluded.error_message,
                         attempted_at = excluded.attempted_at
-                `).run(lecture.id, i + 1, filename, String(err.message || 'unknown error'));
+                `).run(lecture.id, domIndex + 1, filename, String(err.message || 'unknown error'));
             } catch (dbErr) {
                 console.warn(`[archive] failed to record archive_failures row: ${dbErr.message}`);
             }
@@ -273,7 +344,7 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
                         filename = excluded.filename,
                         error_message = excluded.error_message,
                         attempted_at = excluded.attempted_at
-                `).run(lecture.id, i + 1, filename, errorMsg);
+                `).run(lecture.id, domIndex + 1, filename, errorMsg);
             } catch (dbErr) {
                 console.warn(`[archive] failed to record truncation row: ${dbErr.message}`);
             }
@@ -287,7 +358,7 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
             // Successful download — clear any prior failure row for this slot.
             try {
                 getDb().prepare("DELETE FROM archive_failures WHERE lecture_id = ? AND video_index = ?")
-                    .run(lecture.id, i + 1);
+                    .run(lecture.id, domIndex + 1);
             } catch { /* ignore */ }
         }
 
@@ -503,26 +574,41 @@ export async function reorderLectureVideosByDom(lectureId, { dryRun = false } = 
         : `${SCHOOL_URL}${lecture.url}`;
 
     const { browser, page } = await createAuthenticatedBrowser();
-    const manifests = [];
+    // Same event-stream + embed-id attribution that downloadLectureVideo
+    // uses. Network-completion order between iframes isn't reliable on
+    // Hotmart, so we don't trust it — we pair each captured m3u8 with the
+    // most recent /embed/<id> request, which is the iframe whose player
+    // produced it.
+    const events = [];
     page.on('request', (req) => {
-        if (req.url().toLowerCase().includes('.m3u8')) {
-            manifests.push({ url: req.url(), headers: req.headers() });
+        const url = req.url();
+        if (url.includes('hotmart')) {
+            const embedMatch = url.match(/\/embed\/([A-Za-z0-9_-]+)(?:[/?#]|$)/);
+            if (embedMatch) {
+                events.push({ type: 'embed', embedId: embedMatch[1], url, headers: req.headers() });
+                return;
+            }
+        }
+        if (url.toLowerCase().includes('.m3u8')) {
+            events.push({ type: 'm3u8', url, headers: req.headers() });
         }
     });
 
     try {
         await page.goto(lectureUrl, { waitUntil: 'networkidle2', timeout: NAVIGATE_TIMEOUT_MS });
 
-        // Count iframes; if multiple, scroll each into view in DOM order so
-        // the players load their manifests in document order. Same approach as
-        // downloadLectureVideo's capture path.
-        const iframeCount = await page.evaluate(() => {
-            return document.querySelectorAll('iframe[src*="hotmart"], iframe[src*="cf-embed"], iframe[src*="player.hotmart"]').length;
-        }).catch(() => 0);
+        const liveEmbedIds = await page.evaluate(() => {
+            const frames = document.querySelectorAll('iframe[src*="hotmart"], iframe[src*="cf-embed"], iframe[src*="player.hotmart"]');
+            return [...frames].map(f => {
+                const src = f.src || '';
+                const m = src.match(/\/embed\/([A-Za-z0-9_-]+)/);
+                return m ? m[1] : null;
+            }).filter(Boolean);
+        }).catch(() => []);
 
-        if (iframeCount > 1) {
+        if (liveEmbedIds.length > 1) {
             const PER_IFRAME_DWELL = 6000;
-            for (let i = 0; i < iframeCount; i++) {
+            for (let i = 0; i < liveEmbedIds.length; i++) {
                 try {
                     await page.evaluate((idx) => {
                         const fs = document.querySelectorAll('iframe[src*="hotmart"], iframe[src*="cf-embed"], iframe[src*="player.hotmart"]');
@@ -535,30 +621,57 @@ export async function reorderLectureVideosByDom(lectureId, { dryRun = false } = 
             await new Promise(r => setTimeout(r, HLS_DWELL_MS));
         }
 
-        // Dedupe manifests by parent path; capture order = DOM order thanks to scroll.
-        const byParent = new Map();
-        for (const m of manifests) {
-            try {
-                const u = new URL(m.url);
-                const parent = `${u.origin}${u.pathname.substring(0, u.pathname.lastIndexOf('/'))}`;
-                if (!byParent.has(parent)) byParent.set(parent, m);
-            } catch { /* skip */ }
+        // Group captured m3u8s by their preceding /embed/<id> request, then
+        // build masterList in DOM order using liveEmbedIds (static DOM order).
+        const manifestsByEmbed = new Map();
+        let currentEmbedId = null;
+        for (const ev of events) {
+            if (ev.type === 'embed') {
+                currentEmbedId = ev.embedId;
+                if (!manifestsByEmbed.has(currentEmbedId)) manifestsByEmbed.set(currentEmbedId, []);
+            } else if (ev.type === 'm3u8' && currentEmbedId != null) {
+                manifestsByEmbed.get(currentEmbedId).push({ url: ev.url, headers: ev.headers });
+            }
         }
-        const masterList = [...byParent.values()];
+        const masterList = [];
+        for (let domIndex = 0; domIndex < liveEmbedIds.length; domIndex++) {
+            const embedId = liveEmbedIds[domIndex];
+            const m3u8s = manifestsByEmbed.get(embedId) || [];
+            if (m3u8s.length === 0) continue;
+            const byParent = new Map();
+            for (const m of m3u8s) {
+                try {
+                    const u = new URL(m.url);
+                    const parent = `${u.origin}${u.pathname.substring(0, u.pathname.lastIndexOf('/'))}`;
+                    if (!byParent.has(parent)) byParent.set(parent, m);
+                } catch { /* skip */ }
+            }
+            const master = [...byParent.values()][0];
+            if (master) masterList.push({ ...master, embedId, domIndex });
+        }
         if (masterList.length === 0) throw new Error('No HLS manifests captured');
 
-        // Expected duration per DOM-ordered manifest
+        // Expected duration per DOM-ordered manifest. domIndex matches the
+        // iframe's true position on the page, not capture-completion order.
         const expected = [];
-        for (let i = 0; i < masterList.length; i++) {
+        for (const entry of masterList) {
             let durationSec = null;
             try {
-                const probe = await probeManifestDuration(masterList[i].url, masterList[i].headers);
+                const probe = await probeManifestDuration(entry.url, entry.headers);
                 durationSec = probe.durationSec || null;
             } catch (e) {
-                console.warn(`[reorder] lecture ${lectureId} DOM pos ${i} manifest probe failed: ${e.message}`);
+                console.warn(`[reorder] lecture ${lectureId} DOM pos ${entry.domIndex} manifest probe failed: ${e.message}`);
             }
-            expected.push({ domIndex: i, expectedSec: durationSec });
+            expected.push({ domIndex: entry.domIndex, expectedSec: durationSec });
         }
+        // Fill in nulls for any DOM slots that had no manifest capture so the
+        // downstream matcher sees a complete picture (and the all-or-nothing
+        // probe guard can detect partial coverage).
+        const coveredDom = new Set(expected.map(e => e.domIndex));
+        for (let d = 0; d < liveEmbedIds.length; d++) {
+            if (!coveredDom.has(d)) expected.push({ domIndex: d, expectedSec: null });
+        }
+        expected.sort((a, b) => a.domIndex - b.domIndex);
 
         // Actual duration per existing file
         const actual = [];
