@@ -1725,13 +1725,17 @@ function renderTranscriptDetail(transcript, highlightQuery) {
     const rescrapeBtn = isCourseLecture
         ? `<button class="rescrape-transcript-btn" data-lecture-id="${escapeHtml(String(transcript.lectureId))}" title="Re-fetch the lecture page and re-segment the transcript per video. Useful when a multi-video lecture's transcript text is concatenated together (video_index NULL on chunks) instead of split per tab.">Re-scrape transcript</button>`
         : '';
-    // Only show the reorder button when the lecture has 2+ videos — the file
-    // ordering only matters across multiple files. Useful when the videos were
-    // archived before the iframe-scroll DOM-order capture landed and the tabs
-    // play in a different order than the per-video transcripts.
-    const reorderBtn = hasMultipleVideos
-        ? `<button class="reorder-videos-btn" data-lecture-id="${escapeHtml(String(transcript.lectureId))}" title="Match file names to DOM order without re-downloading. Captures fresh DOM-ordered manifests, probes their expected durations, and renames the existing mp4s in place so Video N's file matches Video N's transcript.">Re-order videos</button>`
-        : '';
+    // Re-order videos button is HIDDEN. The algorithm matches captured m3u8
+    // manifests to expected durations probed from those manifests — but
+    // Hotmart returns manifests in non-deterministic order across runs, so
+    // "captured order" isn't actually DOM order and the resulting rename
+    // plan is wrong in unpredictable ways. Restoring this requires a
+    // deterministic mapping from each captured manifest to its source
+    // iframe's embed_id; that's a real engineering effort and not shipped
+    // yet. Until then the only safe fix for a mis-ordered lecture is a
+    // manual rename or a fresh archive-from-scratch with shift-click.
+    const reorderBtn = '';
+    void hasMultipleVideos;
 
     el.transcriptDetail.innerHTML = `
     <div class="detail-header">
