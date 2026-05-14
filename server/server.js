@@ -1199,19 +1199,32 @@ app.get('/api/courses/:id/sections', (req, res) => {
 });
 
 // GET /api/courses/:id/lectures — List lectures, excluding Teachable nav artifacts
+// Optional ?type= filter: only return lectures that have at least one FK-linked
+// transcript whose transcript_type matches. Categories come from the legacy
+// `transcripts` table — for a course with no linked transcripts the result is
+// empty (semantically correct: no transcripts of that type exist on this course).
 app.get('/api/courses/:id/lectures', (req, res) => {
     const db = getDb();
     const sectionId = req.query.section_id ? parseInt(req.query.section_id) : null;
-    const whereClause = sectionId
-        ? 'WHERE cl.course_id = ? AND cl.section_id = ?'
-        : 'WHERE cl.course_id = ?';
-    const params = sectionId ? [req.params.id, sectionId] : [req.params.id];
-
+    const type = req.query.type ? String(req.query.type) : null;
+    const whereParts = ['cl.course_id = ?'];
+    const params = [req.params.id];
+    if (sectionId) {
+        whereParts.push('cl.section_id = ?');
+        params.push(sectionId);
+    }
+    if (type) {
+        whereParts.push(`EXISTS (
+            SELECT 1 FROM transcripts t
+            WHERE t.lecture_id = cl.id AND t.transcript_type = ?
+        )`);
+        params.push(type);
+    }
     const lectures = db.prepare(`
         SELECT cl.*, cs.title as section_title
         FROM course_lectures cl
         LEFT JOIN course_sections cs ON cl.section_id = cs.id
-        ${whereClause}
+        WHERE ${whereParts.join(' AND ')}
           AND cl.title != 'Start'
           AND cl.title NOT LIKE '%Check Out the FFA Free Community Classes%'
         ORDER BY cs.position, cl.position

@@ -343,8 +343,11 @@ async function loadTranscripts() {
         // If a course is selected, show course content instead
         if (state.activeSource && state.activeSource.startsWith('course-')) {
             const courseId = state.activeSource.replace('course-', '');
-            const params = state.activeSection ? `?section_id=${state.activeSection}` : '';
-            let data = await api(`/api/courses/${courseId}/lectures${params}`);
+            const q = new URLSearchParams();
+            if (state.activeSection) q.set('section_id', state.activeSection);
+            if (state.activeType) q.set('type', state.activeType);
+            const qs = q.toString();
+            let data = await api(`/api/courses/${courseId}/lectures${qs ? '?' + qs : ''}`);
             if (state.activeClassNumber) {
                 data = data.filter(lec => String(lec.class_number) === String(state.activeClassNumber));
             }
@@ -512,6 +515,15 @@ function stripTagPrefix(title, tag) {
     if (!tag) return title || '';
     const re = new RegExp(`^.*?\\b${tag}\\s*:\\s*`);
     return (title || '').replace(re, '').trim();
+}
+
+// Display-time only: drop a leading "<Month> <YYYY> " from course titles so
+// recurring series like "August 2025 FFA Publishing Summit" surface as plain
+// "FFA Publishing Summit" in the sidebar. The DB row keeps its full title so
+// the scraper and search remain authoritative.
+function displayCourseTitle(title) {
+    if (!title) return '';
+    return title.replace(/^(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}\s+/i, '').trim() || title;
 }
 
 function buildCourseTreeRoots() {
@@ -741,7 +753,7 @@ function renderChildren(parentNode, depth, childrenEl) {
     if (parentNode.kind === 'tag-group') {
         for (const course of parentNode.courses) {
             const courseLabel = parentNode.tag === 'OTHER'
-                ? (course.title || `Course ${course.id}`)
+                ? (displayCourseTitle(course.title) || `Course ${course.id}`)
                 : stripTagPrefix(course.title, parentNode.tag) || course.title || `Course ${course.id}`;
             const courseNode = {
                 kind: 'course',
@@ -2856,13 +2868,15 @@ function renderWikiEntity(entity) {
         state.activeWikiEntityId = null;
         if (state.activeWikiKind) openWikiKind(state.activeWikiKind);
     });
-    el.wikiContainer.querySelectorAll('.wiki-source-link').forEach(link => {
+    el.wikiContainer.querySelectorAll('.wiki-source-link[data-lecture-id]').forEach(link => {
         link.addEventListener('click', (ev) => {
             ev.preventDefault();
             const lid = Number(link.getAttribute('data-lecture-id'));
             if (lid) {
                 state.activeLectureId = lid;
-                loadTranscriptDetail(lid);
+                // course_lectures detail is loaded via the `clec-<id>` form;
+                // a bare numeric id would mis-route to /api/transcripts/<id>.
+                loadTranscriptDetail(`clec-${lid}`);
             }
         });
     });
