@@ -915,7 +915,7 @@ app.post('/api/courses/:id/archive-videos', async (req, res) => {
     if (!Number.isInteger(courseId) || courseId <= 0) {
         return res.status(400).json({ error: 'Invalid courseId' });
     }
-    const { force = false } = req.body || {};
+    const { force = false, sectionId = null, classNumber = null } = req.body || {};
 
     if (_activeArchiveJobs.has(courseId)) {
         return res.status(409).json({ error: 'An archive job is already running for this course' });
@@ -942,6 +942,8 @@ app.post('/api/courses/:id/archive-videos', async (req, res) => {
     try {
         const { error } = await archiveCourseVideos(courseId, {
             force,
+            sectionId,
+            classNumber,
             signal: controller.signal,
             onProgress: (event) => {
                 res.write(`data: ${JSON.stringify(event)}\n\n`);

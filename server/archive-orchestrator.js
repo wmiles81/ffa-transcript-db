@@ -23,17 +23,20 @@ export async function checkFfmpeg() {
 }
 
 /**
- * Archive every Hotmart-hosted lecture in a course.
+ * Archive every Hotmart-hosted lecture in a course, optionally narrowed to a
+ * single section or class group.
  *
  * @param {number} courseId
  * @param {object} opts
- * @param {boolean} [opts.force=false]   — Re-download even if video_local_path already set
- * @param {AbortSignal} [opts.signal]    — Cancel mid-run (cooperative; checked between lectures)
+ * @param {boolean} [opts.force=false]    — Re-download even if video_local_path already set
+ * @param {AbortSignal} [opts.signal]     — Cancel mid-run (cooperative; checked between lectures)
  * @param {(event: object) => void} [opts.onProgress] — Event emitter (see plan for event shapes)
+ * @param {number} [opts.sectionId]       — Limit to lectures in this section
+ * @param {string} [opts.classNumber]     — Limit to lectures with this class_number
  * @returns {Promise<{summary, interrupted, error}>}
  */
 export async function archiveCourseVideos(courseId, opts = {}) {
-    const { force = false, signal, onProgress = () => {} } = opts;
+    const { force = false, signal, onProgress = () => {}, sectionId = null, classNumber = null } = opts;
     const startedAt = Date.now();
 
     const ffmpeg = await checkFfmpeg();
@@ -58,11 +61,26 @@ export async function archiveCourseVideos(courseId, opts = {}) {
         return { summary: null, interrupted: false, error: `No course found with id ${courseId}` };
     }
 
+    const whereParts = ['course_id = ?', "(removed_at IS NULL OR removed_at = '')"];
+    const lectureParams = [courseId];
+    if (sectionId != null) {
+        whereParts.push('section_id = ?');
+        lectureParams.push(sectionId);
+    }
+    if (classNumber != null && classNumber !== '') {
+        whereParts.push('class_number = ?');
+        lectureParams.push(String(classNumber));
+    }
     const lectures = db.prepare(
-        "SELECT * FROM course_lectures WHERE course_id = ? AND (removed_at IS NULL OR removed_at = '') ORDER BY position"
-    ).all(courseId);
+        `SELECT * FROM course_lectures WHERE ${whereParts.join(' AND ')} ORDER BY position`
+    ).all(...lectureParams);
 
-    onProgress({ type: 'course', courseId: course.id, title: course.title, total: lectures.length });
+    const scopeParts = [];
+    if (sectionId != null) scopeParts.push(`section ${sectionId}`);
+    if (classNumber != null && classNumber !== '') scopeParts.push(`class ${classNumber}`);
+    const scopeLabel = scopeParts.length ? ` (${scopeParts.join(', ')})` : '';
+
+    onProgress({ type: 'course', courseId: course.id, title: course.title + scopeLabel, total: lectures.length });
 
     ensureMediaLibraryExists();
 

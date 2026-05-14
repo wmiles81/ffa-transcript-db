@@ -1651,9 +1651,11 @@ function renderTranscriptDetail(transcript, highlightQuery) {
 
     let playerHtml = '';
     let savedPlayerSpeed = 1;
+    let savedAutoSequence = false;
     try {
         const s = Number(localStorage.getItem('tdb-player-speed'));
         if (Number.isFinite(s) && s >= 0.25 && s <= 4) savedPlayerSpeed = s;
+        savedAutoSequence = localStorage.getItem('tdb-player-auto-sequence') === '1';
     } catch { /* ignore */ }
 
     if (transcript.videos && transcript.videos.length > 0 && transcript.lectureId) {
@@ -1670,10 +1672,17 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         if (savedPlayerWidth) styleParts.push(`width: ${savedPlayerWidth}px`);
         if (savedPlayerHeight) styleParts.push(`height: ${savedPlayerHeight}px`);
         const playerStyle = styleParts.length ? ` style="${styleParts.join('; ')}"` : '';
+        const autoSeqControl = transcript.videos.length > 1
+            ? `<label class="lecture-player-auto-seq-label" title="When a video ends, advance to the next video in this lecture">
+                    <input type="checkbox" class="lecture-player-auto-seq"${savedAutoSequence ? ' checked' : ''}>
+                    <span>Auto-sequence</span>
+               </label>`
+            : '';
         playerHtml = `
         <div class="lecture-player-wrap"${playerStyle}>
             <div class="lecture-player-controls">
                 <div class="lecture-player-tabs">${tabs}</div>
+                ${autoSeqControl}
                 <label class="lecture-player-speed-label">
                     <span class="lecture-player-speed-text">Speed</span>
                     <select class="lecture-player-speed" aria-label="Playback speed">${speedOptions}</select>
@@ -1761,9 +1770,21 @@ function renderTranscriptDetail(transcript, highlightQuery) {
             });
         });
 
+        // Auto-sequence checkbox: persist the toggle and chain through the
+        // remaining videos in this lecture when the current one ends.
+        const autoSeqInput = el.transcriptDetail.querySelector('.lecture-player-auto-seq');
+        let autoSequenceOn = savedAutoSequence;
+        if (autoSeqInput) {
+            autoSeqInput.addEventListener('change', () => {
+                autoSequenceOn = autoSeqInput.checked;
+                try { localStorage.setItem('tdb-player-auto-sequence', autoSequenceOn ? '1' : '0'); } catch { /* quota */ }
+            });
+        }
+
         // Phase 6: tab clicks → switch player src AND swap visible transcript
         // to the chunks tagged with the matching video_index.
         const detailContentEl = el.transcriptDetail.querySelector('.detail-content');
+        const allTabs = el.transcriptDetail.querySelectorAll('.lecture-player-tab');
         el.transcriptDetail.querySelectorAll('.lecture-player-tab').forEach((tab, tabIndex) => {
             tab.addEventListener('click', () => {
                 const file = tab.dataset.file;
@@ -1794,6 +1815,24 @@ function renderTranscriptDetail(transcript, highlightQuery) {
                 }
             });
         });
+
+        // Auto-sequence: when the current video finishes, jump to the next
+        // tab's video and auto-play. Stops at the last tab — no cross-lecture
+        // chaining by design. Toggle state is read live so flipping the
+        // checkbox mid-playback takes effect on the next `ended`.
+        if (allTabs.length > 1) {
+            player.addEventListener('ended', () => {
+                if (!autoSequenceOn) return;
+                const activeIdx = [...allTabs].findIndex(t => t.classList.contains('active'));
+                const nextTab = allTabs[activeIdx + 1];
+                if (!nextTab) return; // last video — stop
+                nextTab.click();
+                // Tab click sets src; wait for the load and start playback.
+                player.addEventListener('loadeddata', () => {
+                    player.play().catch(() => { /* autoplay rejected — leave paused */ });
+                }, { once: true });
+            });
+        }
     }
 
     // Phase 7: persist player width + height on every resize (user dragging the corner handle)
@@ -2370,7 +2409,8 @@ document.getElementById('ffmpeg-banner-recheck')?.addEventListener('click', chec
 // Phase 4b: Archive Videos modal handler
 // =============================================================================
 
-async function startArchive(courseId) {
+async function startArchive(courseId, scope = {}) {
+    const { sectionId = null, classNumber = null } = scope;
     const modal = document.getElementById('archive-modal');
     const statusLine = document.getElementById('archive-status-line');
     const currentLecture = document.getElementById('archive-current-lecture');
@@ -2410,7 +2450,7 @@ async function startArchive(courseId) {
         const res = await fetch(`/api/courses/${courseId}/archive-videos`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ force: false }),
+            body: JSON.stringify({ force: false, sectionId, classNumber }),
         });
         if (!res.ok) {
             statusLine.textContent = `Error: ${res.status} ${res.statusText}`;
@@ -2528,10 +2568,35 @@ async function startArchive(courseId) {
     }
 }
 
-document.getElementById('archive-videos-btn')?.addEventListener('click', (e) => {
+document.getElementById('archive-videos-btn')?.addEventListener('click', async (e) => {
     const courseId = e.currentTarget.dataset.courseId;
     if (!courseId) return;
-    startArchive(Number(courseId));
+    // Scope to whatever the user has narrowed the right pane to. Without this,
+    // clicking the button on a 3-lecture class view would still archive all
+    // ~300 lectures in the course.
+    const sectionId = state.activeSection || null;
+    const classNumber = state.activeClassNumber || null;
+
+    let count = null;
+    try {
+        const q = new URLSearchParams();
+        if (sectionId) q.set('section_id', sectionId);
+        const data = await api(`/api/courses/${courseId}/lectures${q.toString() ? '?' + q : ''}`);
+        const filtered = classNumber
+            ? data.filter(lec => String(lec.class_number) === String(classNumber))
+            : data;
+        count = filtered.length;
+    } catch { /* fall through — confirmation just won't show a count */ }
+
+    const scopeLabel = classNumber
+        ? `class ${classNumber}`
+        : sectionId ? 'the selected section' : 'the entire course';
+    const msg = count != null
+        ? `Archive ${count} lecture${count === 1 ? '' : 's'} from ${scopeLabel}?`
+        : `Archive videos for ${scopeLabel}?`;
+    if (!window.confirm(msg)) return;
+
+    startArchive(Number(courseId), { sectionId, classNumber });
 });
 
 document.getElementById('archive-modal-close')?.addEventListener('click', () => {

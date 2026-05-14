@@ -2465,6 +2465,28 @@ body.splash-active {
   margin-left: auto;
   flex-shrink: 0;
 }
+.lecture-player-auto-seq-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+  padding: 0.25rem 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  flex-shrink: 0;
+  user-select: none;
+}
+.lecture-player-auto-seq-label + .lecture-player-speed-label {
+  margin-left: 0.75rem;
+}
+.lecture-player-auto-seq {
+  accent-color: var(--accent, #f0a830);
+  cursor: pointer;
+  margin: 0;
+}
 .lecture-player-speed-text {
   font-weight: 500;
 }
