@@ -5,7 +5,7 @@ import fs from 'fs';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { initializeDb, getDb, closeDb } from './db.js';
-import { scrapeCourse, deleteCourse, openLoginBrowser, hasSession, clearSession, fetchAvailableCourses } from './scraper.js';
+import { scrapeCourse, deleteCourse, openLoginBrowser, hasSession, clearSession, fetchAvailableCourses, rescrapeLectureTranscripts } from './scraper.js';
 import { checkFfmpeg, archiveCourseVideos } from './archive-orchestrator.js';
 import { ingestLecture, ingestPending, rebuildCourse, listEntities, getEntity, lint as wikiLint, recentLog as wikiRecentLog } from './wiki.js';
 
@@ -1011,6 +1011,26 @@ app.get('/api/courses/lectures/:id', (req, res) => {
     ).all(req.params.id);
 
     res.json({ ...lecture, chunks, content: chunks.map(c => c.content).join('\n\n---\n\n') });
+});
+
+// POST /api/courses/lectures/:id/rescrape-transcripts
+// Re-extract per-video transcript segments for a single lecture and replace
+// its course_chunks. Used to upgrade lectures scraped before multi-video
+// chunk indexing landed (their chunks have video_index = NULL on every row
+// so the per-tab transcript filter can't filter on anything).
+app.post('/api/courses/lectures/:id/rescrape-transcripts', async (req, res) => {
+    if (!hasSession()) return res.status(401).json({ error: 'Not logged in' });
+    const lectureId = Number(req.params.id);
+    if (!Number.isInteger(lectureId) || lectureId <= 0) {
+        return res.status(400).json({ error: 'Invalid lecture id' });
+    }
+    try {
+        const result = await rescrapeLectureTranscripts(lectureId);
+        res.json({ ok: true, ...result });
+    } catch (err) {
+        console.warn(`[rescrape] lecture ${lectureId} failed: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // GET /api/courses/lectures/:id/transcripts

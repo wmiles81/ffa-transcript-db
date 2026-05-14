@@ -1700,6 +1700,11 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         `;
     }
 
+    const isCourseLecture = transcript.result_type === 'course' && transcript.lectureId;
+    const rescrapeBtn = isCourseLecture
+        ? `<button class="rescrape-transcript-btn" data-lecture-id="${escapeHtml(String(transcript.lectureId))}" title="Re-fetch the lecture page and re-segment the transcript per video. Useful when a multi-video lecture's transcript text is concatenated together (video_index NULL on chunks) instead of split per tab.">Re-scrape transcript</button>`
+        : '';
+
     el.transcriptDetail.innerHTML = `
     <div class="detail-header">
       <div class="detail-title">${escapeHtml(transcript.lecture)}</div>
@@ -1710,11 +1715,35 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         ${durationStr ? `<span class="card-duration">${durationStr}</span>` : ''}
         ${transcript.source_name ? `<span class="card-date">${escapeHtml(transcript.source_name)}</span>` : ''}
         ${showNotionBtn ? `<button class="set-notion-btn" data-course-id="${transcript.course_id}" data-url="${escapeHtml(notionUrlInContent)}">Set as course Notion URL</button>` : ''}
+        ${rescrapeBtn}
       </div>
     </div>
     ${playerHtml}
     <div class="detail-content">${content}</div>
   `;
+
+    // Wire the Re-scrape transcript button
+    const rescrapeButton = el.transcriptDetail.querySelector('.rescrape-transcript-btn');
+    if (rescrapeButton) {
+        rescrapeButton.addEventListener('click', async () => {
+            const lectureId = rescrapeButton.dataset.lectureId;
+            const originalText = rescrapeButton.textContent;
+            rescrapeButton.disabled = true;
+            rescrapeButton.textContent = 'Re-scraping…';
+            try {
+                const result = await api(`/api/courses/lectures/${lectureId}/rescrape-transcripts`, { method: 'POST', body: '{}' });
+                rescrapeButton.textContent = `Re-scraped ✓ (${result.videoCount} video${result.videoCount === 1 ? '' : 's'}, ${result.chunkCount} chunks)`;
+                // Reload the lecture detail so the per-video filter picks up the new chunks.
+                setTimeout(() => loadTranscriptDetail(`clec-${lectureId}`), 800);
+            } catch (err) {
+                rescrapeButton.textContent = `Failed: ${err.message}`;
+                setTimeout(() => {
+                    rescrapeButton.textContent = originalText;
+                    rescrapeButton.disabled = false;
+                }, 3000);
+            }
+        });
+    }
 
     // Wire the Notion URL button
     const notionBtn = el.transcriptDetail.querySelector('.set-notion-btn');

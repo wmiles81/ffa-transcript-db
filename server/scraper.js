@@ -725,6 +725,137 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }, options = 
     }
 }
 
+/**
+ * Re-extract per-video transcript segments for a single already-scraped lecture
+ * and replace its course_chunks. Used to upgrade rows that were originally
+ * scraped before the multi-video extraction logic landed (those have
+ * video_index = NULL on every chunk, so the UI's per-tab transcript filter
+ * has nothing to filter on).
+ *
+ * Returns { videoCount, chunkCount, embedIds } on success or throws on failure.
+ * Browser cleanup is guaranteed via finally.
+ */
+export async function rescrapeLectureTranscripts(lectureId) {
+    const db = getDb();
+    const lecture = db.prepare(
+        'SELECT id, url FROM course_lectures WHERE id = ?'
+    ).get(lectureId);
+    if (!lecture) throw new Error(`No lecture with id ${lectureId}`);
+    if (!lecture.url) throw new Error(`Lecture ${lectureId} has no url`);
+
+    const lectureUrl = lecture.url.startsWith('http')
+        ? lecture.url
+        : `${SCHOOL_URL}${lecture.url}`;
+
+    const { browser, page } = await createAuthenticatedBrowser();
+    try {
+        await page.goto(lectureUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 1500));
+
+        const segmentsRaw = await page.evaluate(() => {
+            const root = document.querySelector('.lecture-content, .course-mainbar, main') || document.body;
+            const attachments = [...root.querySelectorAll('.lecture-attachment')];
+            const segments = [];
+            let current = null;
+            let videoSlot = -1;
+
+            for (const att of attachments) {
+                const cls = att.className || '';
+                if (cls.includes('lecture-attachment-type-video')) {
+                    videoSlot += 1;
+                    const iframe = att.querySelector('iframe[src*="hotmart"], iframe[src*="player.hotmart"]');
+                    const src = iframe?.getAttribute('src') || '';
+                    const m = src.match(/\/embed\/([A-Za-z0-9_-]+)/);
+                    current = {
+                        videoIndex: videoSlot,
+                        embedId: m ? m[1] : null,
+                        src: src || null,
+                        downloadUrl: null,
+                        text: '',
+                    };
+                    segments.push(current);
+                } else if (cls.includes('lecture-attachment-type-file')) {
+                    const link = att.querySelector('a.download[href$=".txt"]');
+                    if (link && current) current.downloadUrl = link.href;
+                } else if (cls.includes('lecture-attachment-type-text')) {
+                    const textBox = att.querySelector('.lecture-text-container, .fr-view, .trix-content, .ql-editor') || att;
+                    const t = (textBox.innerText || '').trim();
+                    if (t.length === 0) continue;
+                    if (current) {
+                        current.text = current.text ? `${current.text}\n\n${t}` : t;
+                    } else {
+                        segments.push({ videoIndex: null, embedId: null, src: null, downloadUrl: null, text: t });
+                    }
+                }
+            }
+
+            if (segments.length === 0) {
+                const fallbackSelectors = ['.fr-view', '.lecture-text-container', '.trix-content', '.ql-editor'];
+                for (const sel of fallbackSelectors) {
+                    const els = [...root.querySelectorAll(sel)];
+                    const texts = els.map(el => (el.innerText || '').trim()).filter(t => t.length > 20);
+                    if (texts.length > 0) {
+                        segments.push({ videoIndex: null, embedId: null, src: null, downloadUrl: null, text: texts.join('\n\n---\n\n') });
+                        break;
+                    }
+                }
+            }
+            return segments;
+        });
+
+        for (const seg of segmentsRaw) {
+            if (!seg.downloadUrl) continue;
+            try {
+                const content = await page.evaluate(async (fileUrl) => {
+                    const res = await fetch(fileUrl);
+                    if (!res.ok) return null;
+                    return await res.text();
+                }, seg.downloadUrl);
+                if (content && content.trim().length > 10) {
+                    seg.text = content.trim();
+                }
+            } catch { /* keep scraped fallback */ }
+        }
+
+        const segmentsWithText = segmentsRaw.filter(s => s.text && s.text.length > 10);
+        if (segmentsWithText.length === 0) {
+            throw new Error('No transcript segments found on lecture page');
+        }
+
+        let chunkCount = 0;
+        const tx = db.transaction(() => {
+            db.prepare('DELETE FROM course_chunks WHERE lecture_id = ?').run(lectureId);
+            const ins = db.prepare(
+                'INSERT INTO course_chunks (lecture_id, content, position, video_index) VALUES (?, ?, ?, ?)'
+            );
+            let globalPos = 0;
+            for (const seg of segmentsWithText) {
+                const chunks = chunkText(seg.text);
+                for (const c of chunks) {
+                    ins.run(lectureId, c, globalPos, seg.videoIndex);
+                    globalPos += 1;
+                    chunkCount += 1;
+                }
+            }
+        });
+        tx();
+
+        const embedIds = segmentsRaw
+            .filter(s => s.videoIndex !== null)
+            .sort((a, b) => a.videoIndex - b.videoIndex)
+            .map(s => s.embedId);
+        if (embedIds.length > 0 && embedIds.some(id => id)) {
+            db.prepare('UPDATE course_lectures SET video_embed_ids = ? WHERE id = ?')
+                .run(JSON.stringify(embedIds), lectureId);
+        }
+
+        const videoCount = segmentsRaw.filter(s => s.videoIndex !== null).length;
+        return { videoCount, chunkCount, embedIds };
+    } finally {
+        await browser.close().catch(() => { /* already closed */ });
+    }
+}
+
 function chunkText(text, maxWords = 300) {
     const paragraphs = text.split(/\n\s*\n/);
     const chunks = [];

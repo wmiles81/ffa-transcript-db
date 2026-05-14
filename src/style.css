@@ -931,6 +931,19 @@ body.resizing {
 .set-notion-btn:hover { background: var(--accent); color: var(--bg-primary); }
 .set-notion-btn:disabled { opacity: 0.5; cursor: default; }
 
+.rescrape-transcript-btn {
+  font-size: 0.72rem;
+  padding: 3px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.rescrape-transcript-btn:hover { color: var(--text-primary); border-color: var(--accent); }
+.rescrape-transcript-btn:disabled { opacity: 0.7; cursor: default; }
+
 /* --- Utility --- */
 .hidden {
   display: none !important;
