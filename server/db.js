@@ -489,6 +489,14 @@ export function initializeDb() {
     db.exec("ALTER TABLE course_lectures ADD COLUMN video_embed_ids TEXT");
   }
 
+  // Expected duration in seconds, summed from #EXTINF lines in the HLS variant
+  // playlist at download time. Compared against probeDuration(file) afterwards
+  // so truncated downloads (ffmpeg exited cleanly but the file is shorter than
+  // the manifest claimed) get classified as failures instead of "downloaded".
+  if (!lectureColsLatest.some(c => c.name === 'video_expected_duration_sec')) {
+    db.exec("ALTER TABLE course_lectures ADD COLUMN video_expected_duration_sec REAL");
+  }
+
   // Transcripts↔Lectures linkage. Legacy imported transcripts (sources +
   // transcripts) used to sit in a parallel "Show transcripts" sidebar tree.
   // To surface them where they belong — under the matching course/lecture —

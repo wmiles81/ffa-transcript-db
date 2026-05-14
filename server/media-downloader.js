@@ -176,10 +176,28 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
             .map(([k, v]) => `${k}: ${v}`)
             .join('\r\n') + '\r\n';
 
+        // Probe the manifest upfront so we can detect truncated downloads
+        // (ffmpeg-exit-0 with output shorter than the playlist claimed). Best-
+        // effort: probe failures don't block the download, just leave us
+        // without a denominator for the post-flight completeness check.
+        let expectedDurationSec = null;
+        let hasEndList = null;
+        try {
+            const probe = await probeManifestDuration(master.url, master.headers, signal);
+            expectedDurationSec = probe.durationSec || null;
+            hasEndList = probe.hasEndList;
+            if (!hasEndList) {
+                console.warn(`[archive] lecture ${lecture.id} video ${i + 1} manifest missing EXT-X-ENDLIST — ffmpeg may treat as live and truncate`);
+            }
+        } catch (probeErr) {
+            console.warn(`[archive] lecture ${lecture.id} video ${i + 1} manifest probe failed: ${probeErr.message}`);
+        }
+
         onProgress(`Downloading video ${i + 1}/${masterList.length} via ffmpeg...`, Math.round(15 + (i / masterList.length) * 80), videoInfo);
 
+        let ffStderrTail = '';
         try {
-            await runFfmpeg([
+            const ffResult = await runFfmpeg([
                 '-y',
                 '-headers', headerArg,
                 '-i', master.url,
@@ -189,6 +207,7 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
                 '-f', 'mp4',
                 tmpDest,
             ], onProgressForVideo, signal);
+            ffStderrTail = ffResult?.stderrTail || '';
         } catch (err) {
             if (fs.existsSync(tmpDest)) {
                 try { fs.unlinkSync(tmpDest); } catch { /* ignore */ }
@@ -224,17 +243,66 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
 
         fs.renameSync(tmpDest, dest);
         downloadedPaths.push(relativize(dest));
-        // Clear any prior failure row for this slot — the retry succeeded.
-        try {
-            getDb().prepare("DELETE FROM archive_failures WHERE lecture_id = ? AND video_index = ?")
-                .run(lecture.id, i + 1);
-        } catch { /* ignore */ }
         try { sizesBytes.push(fs.statSync(dest).size); } catch { sizesBytes.push(null); }
+        let actualDurationSec = null;
         try {
-            const d = await probeDuration(dest);
-            durationsSec.push(d);
+            actualDurationSec = await probeDuration(dest);
+            durationsSec.push(actualDurationSec);
         } catch {
             durationsSec.push(null);
+        }
+
+        // Truncation check: if we know what the manifest claimed and the
+        // file came back short, ffmpeg exited code 0 but the download is
+        // incomplete (most often: live-style playlist with no ENDLIST). Mark
+        // as failure with the stderr tail so the next archive run retries.
+        const truncated = (
+            expectedDurationSec && actualDurationSec &&
+            actualDurationSec < expectedDurationSec * 0.95
+        );
+        if (truncated) {
+            const pct = (actualDurationSec / expectedDurationSec * 100).toFixed(1);
+            const reason = `truncated: got ${actualDurationSec.toFixed(1)}s of ${expectedDurationSec.toFixed(1)}s expected (${pct}%)${hasEndList === false ? ' — manifest missing EXT-X-ENDLIST' : ''}`;
+            const errorMsg = `${reason}\n--- ffmpeg stderr tail ---\n${ffStderrTail}`;
+            console.warn(`[archive] lecture ${lecture.id} video ${i + 1}/${masterList.length} ${reason}`);
+            try {
+                getDb().prepare(`
+                    INSERT INTO archive_failures (lecture_id, video_index, filename, error_message, attempted_at)
+                    VALUES (?, ?, ?, ?, datetime('now'))
+                    ON CONFLICT(lecture_id, video_index) DO UPDATE SET
+                        filename = excluded.filename,
+                        error_message = excluded.error_message,
+                        attempted_at = excluded.attempted_at
+                `).run(lecture.id, i + 1, filename, errorMsg);
+            } catch (dbErr) {
+                console.warn(`[archive] failed to record truncation row: ${dbErr.message}`);
+            }
+            onProgress(`Video ${i + 1} truncated: ${reason}`, null, {
+                ...videoInfo,
+                videoError: true,
+                errorMessage: reason,
+                filename,
+            });
+        } else {
+            // Successful download — clear any prior failure row for this slot.
+            try {
+                getDb().prepare("DELETE FROM archive_failures WHERE lecture_id = ? AND video_index = ?")
+                    .run(lecture.id, i + 1);
+            } catch { /* ignore */ }
+        }
+
+        // Persist the expected duration for this lecture (max across its videos
+        // — they shouldn't differ, but in a multi-video lecture we want the
+        // largest known number to compare against future cached-skip checks).
+        if (expectedDurationSec) {
+            try {
+                const current = getDb().prepare('SELECT video_expected_duration_sec FROM course_lectures WHERE id = ?').get(lecture.id);
+                const prev = current?.video_expected_duration_sec || 0;
+                const next = Math.max(prev, expectedDurationSec);
+                if (next > prev) {
+                    getDb().prepare('UPDATE course_lectures SET video_expected_duration_sec = ? WHERE id = ?').run(next, lecture.id);
+                }
+            } catch { /* best-effort */ }
         }
     }
 
@@ -323,14 +391,65 @@ function runFfmpeg(args, onProgress, signal) {
         ff.on('close', (code) => {
             signal?.removeEventListener('abort', onAbort);
             if (abortedByUs || signal?.aborted) return reject(new Error('aborted'));
-            if (code === 0) resolve();
-            else reject(new Error(`ffmpeg exit ${code}\n${stderr.split('\n').slice(-30).join('\n')}`));
+            const stderrTail = stderr.split('\n').slice(-30).join('\n');
+            if (code === 0) resolve({ stderrTail });
+            else reject(new Error(`ffmpeg exit ${code}\n${stderrTail}`));
         });
         ff.on('error', (err) => {
             signal?.removeEventListener('abort', onAbort);
             reject(err);
         });
     });
+}
+
+// Fetch an HLS master playlist, follow to the first variant if needed, and
+// sum its #EXTINF segment durations. Returns the total in seconds plus a
+// boolean for whether the variant carried EXT-X-ENDLIST (its absence is a
+// reliable predictor of ffmpeg truncating the download because it assumes
+// a live stream that stopped emitting).
+async function probeManifestDuration(masterUrl, requestHeaders = {}, signal) {
+    const fetchText = async (url) => {
+        const r = await fetch(url, { headers: requestHeaders, signal });
+        if (!r.ok) throw new Error(`m3u8 ${r.status} ${r.statusText}`);
+        return await r.text();
+    };
+    const masterText = await fetchText(masterUrl);
+    const masterLines = masterText.split('\n');
+    const isMaster = masterLines.some(l => l.startsWith('#EXT-X-STREAM-INF'));
+
+    let mediaText = masterText;
+    if (isMaster) {
+        // First non-comment line after a STREAM-INF declaration is the variant URL
+        let nextIsVariant = false;
+        let variantPath = null;
+        for (const line of masterLines) {
+            if (line.startsWith('#EXT-X-STREAM-INF')) { nextIsVariant = true; continue; }
+            const trimmed = line.trim();
+            if (nextIsVariant && trimmed && !trimmed.startsWith('#')) {
+                variantPath = trimmed;
+                break;
+            }
+        }
+        if (!variantPath) throw new Error('master playlist had no variant URL');
+        // Resolve relative URLs; Hotmart's variant references drop the auth
+        // query string so we have to copy the master's `?hdnts=…` token across
+        // or the CDN returns 403.
+        const masterParsed = new URL(masterUrl);
+        const variantParsed = new URL(variantPath, masterUrl);
+        if (variantParsed.host === masterParsed.host && !variantParsed.search) {
+            variantParsed.search = masterParsed.search;
+        }
+        mediaText = await fetchText(variantParsed.toString());
+    }
+
+    let durationSec = 0;
+    let hasEndList = false;
+    for (const line of mediaText.split('\n')) {
+        const m = line.match(/^#EXTINF:([\d.]+)/);
+        if (m) durationSec += parseFloat(m[1]);
+        if (line.trim().startsWith('#EXT-X-ENDLIST')) hasEndList = true;
+    }
+    return { durationSec, hasEndList };
 }
 
 // Returns null on any failure — duration probing is best-effort, never fatal

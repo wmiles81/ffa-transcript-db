@@ -2410,7 +2410,7 @@ document.getElementById('ffmpeg-banner-recheck')?.addEventListener('click', chec
 // =============================================================================
 
 async function startArchive(courseId, scope = {}) {
-    const { sectionId = null, classNumber = null } = scope;
+    const { sectionId = null, classNumber = null, force = false } = scope;
     const modal = document.getElementById('archive-modal');
     const statusLine = document.getElementById('archive-status-line');
     const currentLecture = document.getElementById('archive-current-lecture');
@@ -2453,7 +2453,7 @@ async function startArchive(courseId, scope = {}) {
         const res = await fetch(`/api/courses/${courseId}/archive-videos`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ force: false, sectionId, classNumber }),
+            body: JSON.stringify({ force, sectionId, classNumber }),
         });
         if (!res.ok) {
             statusLine.textContent = `Error: ${res.status} ${res.statusText}`;
@@ -2645,6 +2645,11 @@ document.getElementById('archive-videos-btn')?.addEventListener('click', async (
     // ~300 lectures in the course.
     const sectionId = state.activeSection || null;
     const classNumber = state.activeClassNumber || null;
+    // Shift+click forces re-download: bypasses the "already archived" shortcut
+    // AND the per-file fs.existsSync skip inside downloadLectureVideo. Useful
+    // for replacing a known-truncated file without having to manually delete
+    // it from the media library on disk.
+    const force = !!e.shiftKey;
 
     let count = null;
     try {
@@ -2660,12 +2665,13 @@ document.getElementById('archive-videos-btn')?.addEventListener('click', async (
     const scopeLabel = classNumber
         ? `class ${classNumber}`
         : sectionId ? 'the selected section' : 'the entire course';
+    const forceNote = force ? ' (force re-download, ignoring existing files)' : '';
     const msg = count != null
-        ? `Archive ${count} lecture${count === 1 ? '' : 's'} from ${scopeLabel}?`
-        : `Archive videos for ${scopeLabel}?`;
+        ? `Archive ${count} lecture${count === 1 ? '' : 's'} from ${scopeLabel}${forceNote}?`
+        : `Archive videos for ${scopeLabel}${forceNote}?`;
     if (!window.confirm(msg)) return;
 
-    startArchive(Number(courseId), { sectionId, classNumber });
+    startArchive(Number(courseId), { sectionId, classNumber, force });
 });
 
 document.getElementById('archive-modal-close')?.addEventListener('click', () => {
