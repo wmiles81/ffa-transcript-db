@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { initializeDb, getDb, closeDb } from './db.js';
 import { scrapeCourse, deleteCourse, openLoginBrowser, hasSession, clearSession, fetchAvailableCourses, rescrapeLectureTranscripts } from './scraper.js';
 import { checkFfmpeg, archiveCourseVideos } from './archive-orchestrator.js';
+import { reorderLectureVideosByDom } from './media-downloader.js';
 import { ingestLecture, ingestPending, rebuildCourse, listEntities, getEntity, lint as wikiLint, recentLog as wikiRecentLog } from './wiki.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1011,6 +1012,28 @@ app.get('/api/courses/lectures/:id', (req, res) => {
     ).all(req.params.id);
 
     res.json({ ...lecture, chunks, content: chunks.map(c => c.content).join('\n\n---\n\n') });
+});
+
+// POST /api/courses/lectures/:id/reorder-videos
+// Repair a multi-video lecture whose mp4 files on disk are in capture order
+// rather than DOM order (e.g., archived before the iframe-scroll capture
+// fix landed). Captures fresh DOM-ordered manifests, probes their expected
+// durations, greedy-matches existing files by closest actual duration, and
+// renames atomically. No re-download required when all files are present.
+app.post('/api/courses/lectures/:id/reorder-videos', async (req, res) => {
+    if (!hasSession()) return res.status(401).json({ error: 'Not logged in' });
+    const lectureId = Number(req.params.id);
+    if (!Number.isInteger(lectureId) || lectureId <= 0) {
+        return res.status(400).json({ error: 'Invalid lecture id' });
+    }
+    const dryRun = !!(req.body && req.body.dryRun);
+    try {
+        const result = await reorderLectureVideosByDom(lectureId, { dryRun });
+        res.json({ ok: true, ...result });
+    } catch (err) {
+        console.warn(`[reorder] lecture ${lectureId} failed: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // POST /api/courses/lectures/:id/rescrape-transcripts

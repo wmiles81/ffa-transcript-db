@@ -469,3 +469,301 @@ function probeDuration(filePath) {
         ff.on('error', () => resolve(null));
     });
 }
+
+/**
+ * Repair a multi-video lecture whose mp4 files on disk are in capture
+ * (network-event) order rather than DOM (on-page) order. Re-opens the lecture
+ * page, captures manifests in DOM order via iframe scroll, probes each
+ * manifest's expected duration, then greedy-matches each DOM position to the
+ * existing file with the closest actual duration. Files are renamed atomically
+ * (rename-to-temp, then rename-to-final) so a mid-flight failure leaves the
+ * pre-existing files recoverable.
+ *
+ * Returns { plan: [{ domIndex, expectedSec, matchedFile, actualSec, finalName }],
+ *           unmatchedDomPositions, summary }.
+ * Throws if the page can't load or if no manifests are captured.
+ */
+export async function reorderLectureVideosByDom(lectureId, { dryRun = false } = {}) {
+    const db = getDb();
+    const lecture = db.prepare(
+        'SELECT id, course_id, url, video_local_paths FROM course_lectures WHERE id = ?'
+    ).get(lectureId);
+    if (!lecture) throw new Error(`No lecture with id ${lectureId}`);
+    if (!lecture.video_local_paths) throw new Error('Lecture has no archived videos');
+
+    let recordedPaths;
+    try { recordedPaths = JSON.parse(lecture.video_local_paths); }
+    catch { throw new Error('video_local_paths is malformed JSON'); }
+    if (!Array.isArray(recordedPaths) || recordedPaths.length === 0) {
+        throw new Error('video_local_paths is empty');
+    }
+
+    const lectureUrl = lecture.url.startsWith('http')
+        ? lecture.url
+        : `${SCHOOL_URL}${lecture.url}`;
+
+    const { browser, page } = await createAuthenticatedBrowser();
+    const manifests = [];
+    page.on('request', (req) => {
+        if (req.url().toLowerCase().includes('.m3u8')) {
+            manifests.push({ url: req.url(), headers: req.headers() });
+        }
+    });
+
+    try {
+        await page.goto(lectureUrl, { waitUntil: 'networkidle2', timeout: NAVIGATE_TIMEOUT_MS });
+
+        // Count iframes; if multiple, scroll each into view in DOM order so
+        // the players load their manifests in document order. Same approach as
+        // downloadLectureVideo's capture path.
+        const iframeCount = await page.evaluate(() => {
+            return document.querySelectorAll('iframe[src*="hotmart"], iframe[src*="cf-embed"], iframe[src*="player.hotmart"]').length;
+        }).catch(() => 0);
+
+        if (iframeCount > 1) {
+            const PER_IFRAME_DWELL = 6000;
+            for (let i = 0; i < iframeCount; i++) {
+                try {
+                    await page.evaluate((idx) => {
+                        const fs = document.querySelectorAll('iframe[src*="hotmart"], iframe[src*="cf-embed"], iframe[src*="player.hotmart"]');
+                        if (fs[idx]) fs[idx].scrollIntoView({ block: 'center', behavior: 'instant' });
+                    }, i);
+                } catch { /* page navigated */ }
+                await new Promise(r => setTimeout(r, PER_IFRAME_DWELL));
+            }
+        } else {
+            await new Promise(r => setTimeout(r, HLS_DWELL_MS));
+        }
+
+        // Dedupe manifests by parent path; capture order = DOM order thanks to scroll.
+        const byParent = new Map();
+        for (const m of manifests) {
+            try {
+                const u = new URL(m.url);
+                const parent = `${u.origin}${u.pathname.substring(0, u.pathname.lastIndexOf('/'))}`;
+                if (!byParent.has(parent)) byParent.set(parent, m);
+            } catch { /* skip */ }
+        }
+        const masterList = [...byParent.values()];
+        if (masterList.length === 0) throw new Error('No HLS manifests captured');
+
+        // Expected duration per DOM-ordered manifest
+        const expected = [];
+        for (let i = 0; i < masterList.length; i++) {
+            let durationSec = null;
+            try {
+                const probe = await probeManifestDuration(masterList[i].url, masterList[i].headers);
+                durationSec = probe.durationSec || null;
+            } catch (e) {
+                console.warn(`[reorder] lecture ${lectureId} DOM pos ${i} manifest probe failed: ${e.message}`);
+            }
+            expected.push({ domIndex: i, expectedSec: durationSec });
+        }
+
+        // Actual duration per existing file
+        const actual = [];
+        for (const relPath of recordedPaths) {
+            const absPath = resolveRelative(relPath);
+            const exists = fs.existsSync(absPath);
+            const dur = exists ? await probeDuration(absPath) : null;
+            actual.push({ relPath, absPath, actualSec: dur, exists });
+        }
+
+        // Globally-optimal greedy: enumerate every (domIndex, file) candidate
+        // pair within tolerance, sort by smallest |expected - actual| first,
+        // and claim pairs in that order. This avoids the trap of an early DOM
+        // position grabbing a file that's actually a much better fit for a
+        // later DOM position. 60s tolerance covers container-metadata rounding
+        // plus a comfortable margin without admitting nonsense matches.
+        const TOLERANCE_SEC = 60;
+        const candidates = [];
+        for (const e of expected) {
+            if (e.expectedSec == null) continue;
+            for (let j = 0; j < actual.length; j++) {
+                if (!actual[j].exists || actual[j].actualSec == null) continue;
+                const diff = Math.abs(actual[j].actualSec - e.expectedSec);
+                if (diff <= TOLERANCE_SEC) {
+                    candidates.push({ domIndex: e.domIndex, fileIdx: j, diff });
+                }
+            }
+        }
+        candidates.sort((a, b) => a.diff - b.diff);
+        const claimedDom = new Set();
+        const claimedFile = new Set();
+        const matchByDom = new Map();
+        for (const c of candidates) {
+            if (claimedDom.has(c.domIndex) || claimedFile.has(c.fileIdx)) continue;
+            matchByDom.set(c.domIndex, c);
+            claimedDom.add(c.domIndex);
+            claimedFile.add(c.fileIdx);
+        }
+        const plan = [];
+        for (const e of expected) {
+            const m = matchByDom.get(e.domIndex);
+            if (!m) {
+                plan.push({
+                    domIndex: e.domIndex,
+                    expectedSec: e.expectedSec,
+                    matchedFile: null,
+                    actualSec: null,
+                    finalName: nameForDomIndex(e.domIndex),
+                });
+            } else {
+                plan.push({
+                    domIndex: e.domIndex,
+                    expectedSec: e.expectedSec,
+                    matchedFile: actual[m.fileIdx].relPath,
+                    matchedAbs: actual[m.fileIdx].absPath,
+                    actualSec: actual[m.fileIdx].actualSec,
+                    diff: m.diff,
+                    finalName: nameForDomIndex(e.domIndex),
+                });
+            }
+        }
+
+        const unmatchedDom = plan.filter(p => !p.matchedFile).map(p => p.domIndex);
+
+        // Safety guard: if the page reload captured fewer manifests than the
+        // files we already have on disk, something went wrong with the
+        // capture (token expired, transient player state, etc.) — refuse to
+        // proceed. The previous version of this function could clobber a
+        // surviving file by renaming an un-temp'd target on top of it.
+        const existingCount = actual.filter(a => a.exists).length;
+        if (masterList.length < existingCount) {
+            throw new Error(`captured ${masterList.length} manifest(s) but ${existingCount} file(s) exist on disk — likely a transient page-load issue, refusing to proceed`);
+        }
+
+        // Idempotency guard: if every existing file is already in the slot
+        // its filename claims (and that slot's content matches the expected
+        // DOM duration), there's nothing to do. Re-clicking the button when
+        // things are already correct used to be the failure mode that
+        // SWAPPED files when Hotmart's manifest capture order varied between
+        // page loads — refuse to make any changes when no changes are needed.
+        let allInOrder = true;
+        for (const e of expected) {
+            if (e.expectedSec == null) continue;
+            const slotAbs = path.join(path.dirname(actual.find(a => a.exists)?.absPath || resolveRelative(recordedPaths[0])), nameForDomIndex(e.domIndex));
+            if (!fs.existsSync(slotAbs)) continue; // empty DOM slot — OK
+            const dur = await probeDuration(slotAbs);
+            if (dur == null || Math.abs(dur - e.expectedSec) > 60) {
+                allInOrder = false;
+                break;
+            }
+        }
+        if (allInOrder) {
+            return {
+                plan: expected.map(e => ({
+                    domIndex: e.domIndex,
+                    expectedSec: e.expectedSec,
+                    matchedFile: null,
+                    actualSec: null,
+                    finalName: nameForDomIndex(e.domIndex),
+                })),
+                unmatchedDomPositions: [],
+                totalDom: expected.length,
+                totalMatched: existingCount,
+                alreadyInOrder: true,
+            };
+        }
+
+        // dryRun: return the plan without touching the filesystem so the
+        // caller can show the user exactly which renames will happen and
+        // require confirmation before mutating anything. This is the
+        // post-mortem fix for a previous incident where re-clicking the
+        // button after Hotmart returned a different manifest capture order
+        // swapped two videos that were already in DOM order.
+        if (dryRun) {
+            return {
+                plan: plan.map(p => ({
+                    domIndex: p.domIndex,
+                    expectedSec: p.expectedSec,
+                    matchedFile: p.matchedFile,
+                    actualSec: p.actualSec,
+                    finalName: p.finalName,
+                })),
+                unmatchedDomPositions: unmatchedDom,
+                totalDom: plan.length,
+                totalMatched: plan.filter(p => p.matchedFile).length,
+                dryRun: true,
+            };
+        }
+
+        // Atomic rename in three stages, designed so any single fs.renameSync
+        // failure leaves recoverable state and an un-temp'd file is never
+        // overwritten:
+        //   1. Move every existing file to a unique temp slot keyed by its
+        //      file index in `actual`. After this nothing remains under its
+        //      original name; nothing can be clobbered by a later rename.
+        //   2. For each matched DOM position, rename its temp → final name.
+        //   3. For each un-matched file (no DOM position claimed it), restore
+        //      its temp back to its original name so the user isn't left with
+        //      `.reorder-tmp-N` orphans. If the original-name slot is now
+        //      occupied (a matched file landed there), leave the temp as-is
+        //      and warn — caller can inspect and rename manually.
+        const dirAbs = path.dirname(actual.find(a => a.exists)?.absPath || resolveRelative(recordedPaths[0]));
+        const tmpByFileIdx = new Map();
+        for (let j = 0; j < actual.length; j++) {
+            if (!actual[j].exists) continue;
+            const tmp = path.join(dirAbs, `.reorder-tmp-${j}`);
+            fs.renameSync(actual[j].absPath, tmp);
+            tmpByFileIdx.set(j, tmp);
+        }
+
+        const finalRelPaths = [];
+        const matchedFileIdxs = new Set();
+        for (const c of candidates) {
+            // Re-find each claimed match in the candidates list; matchByDom
+            // entries have the file idx we need.
+            const m = matchByDom.get(c.domIndex);
+            if (!m || m.fileIdx !== c.fileIdx) continue;
+            const tmpPath = tmpByFileIdx.get(c.fileIdx);
+            if (!tmpPath) continue;
+            const finalAbs = path.join(dirAbs, nameForDomIndex(c.domIndex));
+            fs.renameSync(tmpPath, finalAbs);
+            finalRelPaths[c.domIndex] = relativize(finalAbs);
+            matchedFileIdxs.add(c.fileIdx);
+        }
+
+        for (const [fileIdx, tmpPath] of tmpByFileIdx.entries()) {
+            if (matchedFileIdxs.has(fileIdx)) continue;
+            const origName = path.basename(actual[fileIdx].relPath);
+            const restorePath = path.join(dirAbs, origName);
+            if (fs.existsSync(restorePath)) {
+                console.warn(`[reorder] unmatched file '${origName}' cannot be restored (slot now occupied); left as ${path.basename(tmpPath)}`);
+                continue;
+            }
+            fs.renameSync(tmpPath, restorePath);
+        }
+
+        // Persist the new ordering. Keep unmatched DOM positions out of the
+        // recorded list — those slots need a future archive run to fill.
+        const newPathsCompact = finalRelPaths.filter(Boolean);
+        if (newPathsCompact.length > 0) {
+            db.prepare(`
+                UPDATE course_lectures
+                SET video_local_paths = ?,
+                    video_local_path = ?
+                WHERE id = ?
+            `).run(JSON.stringify(newPathsCompact), newPathsCompact[0], lectureId);
+        }
+
+        return {
+            plan: plan.map(p => ({
+                domIndex: p.domIndex,
+                expectedSec: p.expectedSec,
+                matchedFile: p.matchedFile,
+                actualSec: p.actualSec,
+                finalName: p.finalName,
+            })),
+            unmatchedDomPositions: unmatchedDom,
+            totalDom: plan.length,
+            totalMatched: plan.filter(p => p.matchedFile).length,
+        };
+    } finally {
+        await browser.close().catch(() => { /* ignore */ });
+    }
+}
+
+function nameForDomIndex(i) {
+    return i === 0 ? 'video.mp4' : `video_${i + 1}.mp4`;
+}

@@ -1622,7 +1622,18 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         return html;
     }
 
-    let content = decorateContent(rawTextForVideo(0));
+    // Map "video.mp4"→0, "video_2.mp4"→1, "video_3.mp4"→2, … so that even
+    // sparse on-disk arrangements (a missing video_3 between video_2 and
+    // video_4) filter chunks by the correct DOM position instead of by tab
+    // index (which would be off-by-one whenever a slot is missing).
+    function domIndexFromFile(filename) {
+        if (!filename) return 0;
+        const m = String(filename).match(/^video(?:_(\d+))?\.mp4$/);
+        if (!m) return 0;
+        return m[1] ? Number(m[1]) - 1 : 0;
+    }
+    const firstFileForChunkFilter = transcript.videos && transcript.videos[0] ? transcript.videos[0].file : null;
+    let content = decorateContent(rawTextForVideo(domIndexFromFile(firstFileForChunkFilter)));
 
     // Detect the first Notion URL in the raw content for the "Set Notion URL" button
     const notionMatch = transcript.content?.match(/https?:\/\/[^\s]*notion\.site\/[^\s]*/);
@@ -1659,10 +1670,19 @@ function renderTranscriptDetail(transcript, highlightQuery) {
     } catch { /* ignore */ }
 
     if (transcript.videos && transcript.videos.length > 0 && transcript.lectureId) {
+        // Label tabs by the DOM-position the filename encodes (video.mp4=1,
+        // video_2.mp4=2, …), not by the tab's position in the array. For
+        // sparse archives ("Video 2, Video 4" with a gap) this keeps the
+        // labels honest about which DOM slot each file actually came from.
         const tabs = transcript.videos.length > 1
-            ? transcript.videos.map((v, i) =>
-                `<button class="lecture-player-tab${i === 0 ? ' active' : ''}" data-file="${escapeHtml(v.file)}">Video ${i + 1}</button>`
-              ).join('')
+            ? transcript.videos.map((v, i) => {
+                const labelN = (() => {
+                    if (!v.file) return i + 1;
+                    const m = String(v.file).match(/^video(?:_(\d+))?\.mp4$/);
+                    return m ? (m[1] ? Number(m[1]) : 1) : (i + 1);
+                })();
+                return `<button class="lecture-player-tab${i === 0 ? ' active' : ''}" data-file="${escapeHtml(v.file)}">Video ${labelN}</button>`;
+              }).join('')
             : '';
         const speedOptions = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
             .map(rate => `<option value="${rate}"${rate === savedPlayerSpeed ? ' selected' : ''}>${rate}×</option>`)
@@ -1701,8 +1721,16 @@ function renderTranscriptDetail(transcript, highlightQuery) {
     }
 
     const isCourseLecture = transcript.result_type === 'course' && transcript.lectureId;
+    const hasMultipleVideos = isCourseLecture && Array.isArray(transcript.videos) && transcript.videos.length > 1;
     const rescrapeBtn = isCourseLecture
         ? `<button class="rescrape-transcript-btn" data-lecture-id="${escapeHtml(String(transcript.lectureId))}" title="Re-fetch the lecture page and re-segment the transcript per video. Useful when a multi-video lecture's transcript text is concatenated together (video_index NULL on chunks) instead of split per tab.">Re-scrape transcript</button>`
+        : '';
+    // Only show the reorder button when the lecture has 2+ videos — the file
+    // ordering only matters across multiple files. Useful when the videos were
+    // archived before the iframe-scroll DOM-order capture landed and the tabs
+    // play in a different order than the per-video transcripts.
+    const reorderBtn = hasMultipleVideos
+        ? `<button class="reorder-videos-btn" data-lecture-id="${escapeHtml(String(transcript.lectureId))}" title="Match file names to DOM order without re-downloading. Captures fresh DOM-ordered manifests, probes their expected durations, and renames the existing mp4s in place so Video N's file matches Video N's transcript.">Re-order videos</button>`
         : '';
 
     el.transcriptDetail.innerHTML = `
@@ -1716,6 +1744,7 @@ function renderTranscriptDetail(transcript, highlightQuery) {
         ${transcript.source_name ? `<span class="card-date">${escapeHtml(transcript.source_name)}</span>` : ''}
         ${showNotionBtn ? `<button class="set-notion-btn" data-course-id="${transcript.course_id}" data-url="${escapeHtml(notionUrlInContent)}">Set as course Notion URL</button>` : ''}
         ${rescrapeBtn}
+        ${reorderBtn}
       </div>
     </div>
     ${playerHtml}
@@ -1740,6 +1769,66 @@ function renderTranscriptDetail(transcript, highlightQuery) {
                 setTimeout(() => {
                     rescrapeButton.textContent = originalText;
                     rescrapeButton.disabled = false;
+                }, 3000);
+            }
+        });
+    }
+
+    // Wire the Re-order videos button (only present for multi-video lectures).
+    // Two-step flow: dryRun fetches the plan without touching files; we show
+    // it in a confirm() and only execute the renames if the user approves.
+    // Designed after an incident where re-clicking the button after Hotmart
+    // returned different manifest capture orders silently swapped files.
+    const reorderButton = el.transcriptDetail.querySelector('.reorder-videos-btn');
+    if (reorderButton) {
+        reorderButton.addEventListener('click', async () => {
+            const lectureId = reorderButton.dataset.lectureId;
+            const originalText = reorderButton.textContent;
+            reorderButton.disabled = true;
+            reorderButton.textContent = 'Probing…';
+            try {
+                const dry = await api(`/api/courses/lectures/${lectureId}/reorder-videos`, { method: 'POST', body: JSON.stringify({ dryRun: true }) });
+                if (dry.alreadyInOrder) {
+                    reorderButton.textContent = 'Already in DOM order ✓';
+                    setTimeout(() => {
+                        reorderButton.textContent = originalText;
+                        reorderButton.disabled = false;
+                    }, 2500);
+                    return;
+                }
+                const basename = (p) => String(p).split('/').pop();
+                const renameLines = dry.plan
+                    .filter(p => p.matchedFile && basename(p.matchedFile) !== p.finalName)
+                    .map(p => `  ${basename(p.matchedFile)} (${Math.round(p.actualSec)}s) → ${p.finalName}`);
+                if (renameLines.length === 0) {
+                    reorderButton.textContent = 'Already in DOM order ✓';
+                    setTimeout(() => {
+                        reorderButton.textContent = originalText;
+                        reorderButton.disabled = false;
+                    }, 2500);
+                    return;
+                }
+                const unmatchedNote = dry.unmatchedDomPositions && dry.unmatchedDomPositions.length > 0
+                    ? `\n\n${dry.unmatchedDomPositions.length} DOM slot(s) have no on-disk match — those will be left empty (re-archive to fill).`
+                    : '';
+                const msg = `Reorder will rename ${renameLines.length} file(s):\n\n${renameLines.join('\n')}${unmatchedNote}\n\nProceed?`;
+                if (!window.confirm(msg)) {
+                    reorderButton.textContent = originalText;
+                    reorderButton.disabled = false;
+                    return;
+                }
+                reorderButton.textContent = 'Renaming…';
+                const result = await api(`/api/courses/lectures/${lectureId}/reorder-videos`, { method: 'POST', body: JSON.stringify({ dryRun: false }) });
+                const partial = result.unmatchedDomPositions && result.unmatchedDomPositions.length > 0
+                    ? ` — ${result.unmatchedDomPositions.length} slot${result.unmatchedDomPositions.length === 1 ? '' : 's'} still need archive`
+                    : '';
+                reorderButton.textContent = `Re-ordered ✓ (${result.totalMatched}/${result.totalDom})${partial}`;
+                setTimeout(() => loadTranscriptDetail(`clec-${lectureId}`), 1200);
+            } catch (err) {
+                reorderButton.textContent = `Failed: ${err.message}`;
+                setTimeout(() => {
+                    reorderButton.textContent = originalText;
+                    reorderButton.disabled = false;
                 }, 3000);
             }
         });
@@ -1826,9 +1915,11 @@ function renderTranscriptDetail(transcript, highlightQuery) {
                 );
                 applyRate(); // src change resets playbackRate
 
-                // Swap transcript to the chunks for this video index.
+                // Swap transcript to the chunks for the DOM position the
+                // filename encodes (NOT tabIndex — they only agree when every
+                // slot has a file on disk).
                 if (detailContentEl) {
-                    detailContentEl.innerHTML = decorateContent(rawTextForVideo(tabIndex));
+                    detailContentEl.innerHTML = decorateContent(rawTextForVideo(domIndexFromFile(file)));
                     // Re-bind timestamp links for the new content
                     detailContentEl.querySelectorAll('.timestamp-link').forEach(link => {
                         link.addEventListener('click', (ev) => {
