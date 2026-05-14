@@ -2529,9 +2529,19 @@ async function startArchive(courseId, scope = {}) {
                             li.textContent = `[${event.index}/${total}] ${event.title}${videoPart} — ${event.detail}`;
                             li.className = 'archive-lecture-row downloading';
                         } else if (event.status === 'done') {
-                            const countStr = event.videoCount && event.videoCount > 1 ? ` (${event.videoCount} videos)` : '';
+                            const got = event.videoCount || 0;
+                            const totVideos = event.videoTotal || got;
+                            const failed = event.videoFailed || 0;
+                            let countStr = '';
+                            if (failed > 0) {
+                                countStr = ` (${got} of ${totVideos} videos · ${failed} failed)`;
+                            } else if (totVideos > 1) {
+                                countStr = ` (${totVideos} videos)`;
+                            }
                             li.textContent = `[${event.index}/${total}] ${event.title} — downloaded${countStr}`;
-                            li.className = 'archive-lecture-row done';
+                            li.className = failed > 0
+                                ? 'archive-lecture-row done partial'
+                                : 'archive-lecture-row done';
                         } else if (event.status === 'skipped') {
                             li.textContent = `[${event.index}/${total}] ${event.title}${videoPart} — ${event.detail}`;
                             li.className = 'archive-lecture-row skipped';
@@ -2544,10 +2554,14 @@ async function startArchive(courseId, scope = {}) {
                     case 'summary': {
                         progressFill.style.width = '100%';
                         summary.classList.remove('hidden');
+                        const partialLine = event.partial
+                            ? `<li>Partial (some videos failed): ${event.partial}</li>`
+                            : '';
                         summary.innerHTML = `
                             <h3>Summary</h3>
                             <ul>
                                 <li>Downloaded: ${event.downloaded}</li>
+                                ${partialLine}
                                 <li>Already archived: ${event.alreadyArchived}</li>
                                 <li>Wrong provider: ${event.wrongProvider}</li>
                                 <li>Failed: ${event.failed}</li>

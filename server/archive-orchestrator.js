@@ -118,7 +118,16 @@ export async function archiveCourseVideos(courseId, opts = {}) {
                 });
                 if (result.ok) {
                     tally.downloaded++;
-                    onProgress({ ...baseEvent, status: 'done', sizeBytes: result.sizeBytes, durationSec: result.durationSec, videoCount: result.videoCount || 1 });
+                    if (result.videoFailed > 0) tally.partial = (tally.partial || 0) + 1;
+                    onProgress({
+                        ...baseEvent,
+                        status: 'done',
+                        sizeBytes: result.sizeBytes,
+                        durationSec: result.durationSec,
+                        videoCount: result.videoCount || 1,
+                        videoTotal: result.videoTotal,
+                        videoFailed: result.videoFailed || 0,
+                    });
                 } else if (result.skipped) {
                     if (result.reason === 'already archived') tally.alreadyArchived++;
                     else if (result.reason === 'aborted') { interrupted = true; break; }

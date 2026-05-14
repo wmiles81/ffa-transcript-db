@@ -2083,6 +2083,7 @@ body.resizing {
 .archive-lecture-row.pending { color: var(--text-muted); }
 .archive-lecture-row.downloading { background: var(--accent-glow); color: var(--accent-light); }
 .archive-lecture-row.done { color: var(--secondary); }
+.archive-lecture-row.done.partial { color: var(--accent-light, #f0a830); }
 .archive-lecture-row.skipped { color: var(--text-muted); }
 .archive-lecture-row.error { background: rgba(239, 68, 68, 0.1); color: #f87171; }
 

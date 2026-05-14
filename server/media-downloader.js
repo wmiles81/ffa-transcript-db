@@ -249,6 +249,8 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
         sizeBytes: totalSize,              // total across all videos
         durationSec: totalDuration || null,
         videoCount: downloadedPaths.length,
+        videoTotal: masterList.length,     // includes per-video failures
+        videoFailed: masterList.length - downloadedPaths.length,
     };
 }
 
