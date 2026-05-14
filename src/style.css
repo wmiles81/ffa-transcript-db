@@ -2212,7 +2212,7 @@ body.resizing {
   font-size: 0.78rem;
 }
 
-.transcripts-toggle {
+.unassigned-toggle {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2226,17 +2226,24 @@ body.resizing {
   text-align: left;
 }
 
-.transcripts-toggle:hover {
+.unassigned-toggle:hover {
   color: var(--text-primary);
 }
 
-.transcripts-toggle-chevron {
+.unassigned-toggle-chevron {
   display: inline-block;
   transition: transform 0.15s ease;
 }
 
-.transcripts-toggle[aria-expanded="true"] .transcripts-toggle-chevron {
+.unassigned-toggle[aria-expanded="true"] .unassigned-toggle-chevron {
   transform: rotate(90deg);
+}
+
+.unassigned-toggle[data-count]:not([data-count="0"])::after {
+  content: " (" attr(data-count) ")";
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin-left: 4px;
 }
 
 /* =============================================================================

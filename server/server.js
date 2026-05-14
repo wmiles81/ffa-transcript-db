@@ -837,7 +837,8 @@ app.get('/api/courses', (req, res) => {
     const courses = db.prepare(`
         SELECT c.*,
                (SELECT COUNT(*) FROM course_lectures WHERE course_id = c.id) as lecture_count,
-               (SELECT COUNT(*) FROM course_chunks cc JOIN course_lectures cl ON cc.lecture_id = cl.id WHERE cl.course_id = c.id) as chunk_count
+               (SELECT COUNT(*) FROM course_chunks cc JOIN course_lectures cl ON cc.lecture_id = cl.id WHERE cl.course_id = c.id) as chunk_count,
+               (SELECT COUNT(*) FROM transcripts t JOIN sources s ON t.source_id = s.id WHERE s.course_id = c.id AND t.lecture_id IS NULL) as orphan_transcript_count
         FROM courses c ORDER BY c.title
     `).all();
     res.json(courses);
@@ -986,6 +987,53 @@ app.get('/api/courses/lectures/:id', (req, res) => {
     res.json({ ...lecture, chunks, content: chunks.map(c => c.content).join('\n\n---\n\n') });
 });
 
+// GET /api/courses/lectures/:id/transcripts
+// Returns legacy imported transcripts that have been FK-linked to this
+// scraped lecture (transcripts.lecture_id = :id). Used by the sidebar to
+// render "Transcript" child nodes under each lecture.
+app.get('/api/courses/lectures/:id/transcripts', (req, res) => {
+    const db = getDb();
+    const lectureId = Number(req.params.id);
+    if (!Number.isInteger(lectureId) || lectureId <= 0) {
+        return res.status(400).json({ error: 'Invalid lecture id' });
+    }
+    const transcripts = db.prepare(`
+        SELECT t.id, t.source_id, t.lecture, t.filename, t.transcript_type,
+               t.lecture_date, t.duration_minutes,
+               s.name AS source_name,
+               LENGTH(t.content) AS content_length
+        FROM transcripts t
+        JOIN sources s ON t.source_id = s.id
+        WHERE t.lecture_id = ?
+        ORDER BY t.transcript_type ASC, t.filename ASC
+    `).all(lectureId);
+    res.json(transcripts);
+});
+
+// GET /api/courses/:courseId/orphan-transcripts
+// Returns transcripts whose source is matched to this course (sources.course_id
+// = :courseId) but the transcript itself has no specific lecture link
+// (transcripts.lecture_id IS NULL). Rendered as "Other Transcripts" under the
+// course node in the sidebar.
+app.get('/api/courses/:courseId/orphan-transcripts', (req, res) => {
+    const db = getDb();
+    const courseId = Number(req.params.courseId);
+    if (!Number.isInteger(courseId) || courseId <= 0) {
+        return res.status(400).json({ error: 'Invalid course id' });
+    }
+    const transcripts = db.prepare(`
+        SELECT t.id, t.source_id, t.lecture, t.filename, t.transcript_type,
+               t.lecture_date, t.duration_minutes,
+               s.name AS source_name,
+               LENGTH(t.content) AS content_length
+        FROM transcripts t
+        JOIN sources s ON t.source_id = s.id
+        WHERE s.course_id = ? AND t.lecture_id IS NULL
+        ORDER BY t.lecture ASC, t.transcript_type ASC, t.filename ASC
+    `).all(courseId);
+    res.json(transcripts);
+});
+
 // Phase 5: GET /api/courses/lectures/:id/videos
 // Returns the list of archived video files for a lecture.
 // Response: [{ file, sizeBytes, durationSec }]
@@ -1130,11 +1178,13 @@ app.get('/api/courses/:id/sections', (req, res) => {
     `).all(req.params.id);
     if (includeLectures) {
         const lecturesByCourse = db.prepare(`
-            SELECT id, section_id, title, class_number, position, duration, video_provider, video_local_path
-            FROM course_lectures
-            WHERE course_id = ?
-              AND (removed_at IS NULL OR removed_at = '')
-            ORDER BY section_id, position
+            SELECT cl.id, cl.section_id, cl.title, cl.class_number, cl.position, cl.duration,
+                   cl.video_provider, cl.video_local_path,
+                   (SELECT COUNT(*) FROM transcripts WHERE lecture_id = cl.id) as transcript_count
+            FROM course_lectures cl
+            WHERE cl.course_id = ?
+              AND (cl.removed_at IS NULL OR cl.removed_at = '')
+            ORDER BY cl.section_id, cl.position
         `).all(req.params.id);
         const bySection = new Map();
         for (const lec of lecturesByCourse) {

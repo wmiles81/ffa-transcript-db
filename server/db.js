@@ -489,6 +489,68 @@ export function initializeDb() {
     db.exec("ALTER TABLE course_lectures ADD COLUMN video_embed_ids TEXT");
   }
 
+  // Transcripts↔Lectures linkage. Legacy imported transcripts (sources +
+  // transcripts) used to sit in a parallel "Show transcripts" sidebar tree.
+  // To surface them where they belong — under the matching course/lecture —
+  // we add nullable FKs and run a conservative exact-normalized-name match.
+  // Unmatched rows stay NULL and surface under "Unassigned Transcripts" in
+  // the sidebar instead of being lost.
+  const sourceCols = db.prepare("PRAGMA table_info(sources)").all();
+  if (!sourceCols.some(c => c.name === 'course_id')) {
+    db.exec("ALTER TABLE sources ADD COLUMN course_id INTEGER REFERENCES courses(id)");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_sources_course_id ON sources(course_id)");
+
+  const transcriptCols = db.prepare("PRAGMA table_info(transcripts)").all();
+  if (!transcriptCols.some(c => c.name === 'lecture_id')) {
+    db.exec("ALTER TABLE transcripts ADD COLUMN lecture_id INTEGER REFERENCES course_lectures(id)");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_transcripts_lecture_id ON transcripts(lecture_id)");
+
+  // Auto-match: exact normalized-name equality only. Runs every startup but
+  // only fills NULLs — manual assignments and previously-matched rows are
+  // preserved. New courses scraped later get a chance to claim their
+  // orphaned sources without overwriting anything the user has fixed up.
+  const sourcesMatched = db.prepare(`
+    UPDATE sources
+    SET course_id = (
+      SELECT c.id FROM courses c
+      WHERE LOWER(TRIM(REPLACE(REPLACE(c.title,' ',''),'-',''))) =
+            LOWER(TRIM(REPLACE(REPLACE(sources.name,' ',''),'-','')))
+      LIMIT 1
+    )
+    WHERE course_id IS NULL
+      AND EXISTS (
+        SELECT 1 FROM courses c
+        WHERE LOWER(TRIM(REPLACE(REPLACE(c.title,' ',''),'-',''))) =
+              LOWER(TRIM(REPLACE(REPLACE(sources.name,' ',''),'-','')))
+      )
+  `).run();
+  if (sourcesMatched.changes > 0) {
+    console.warn(`[db] Transcripts migration: matched ${sourcesMatched.changes} source(s) to courses by exact name`);
+  }
+
+  const transcriptsMatched = db.prepare(`
+    UPDATE transcripts
+    SET lecture_id = (
+      SELECT cl.id FROM course_lectures cl
+      JOIN sources s ON s.course_id = cl.course_id
+      WHERE s.id = transcripts.source_id
+        AND LOWER(TRIM(cl.title)) = LOWER(TRIM(transcripts.lecture))
+      LIMIT 1
+    )
+    WHERE lecture_id IS NULL
+      AND EXISTS (
+        SELECT 1 FROM course_lectures cl
+        JOIN sources s ON s.course_id = cl.course_id
+        WHERE s.id = transcripts.source_id
+          AND LOWER(TRIM(cl.title)) = LOWER(TRIM(transcripts.lecture))
+      )
+  `).run();
+  if (transcriptsMatched.changes > 0) {
+    console.warn(`[db] Transcripts migration: matched ${transcriptsMatched.changes} transcript(s) to lectures by exact title`);
+  }
+
   return db;
 }
 

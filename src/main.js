@@ -29,7 +29,7 @@ const state = {
     expanded: new Set(),
     activeClassNumber: null,
     activeLectureId: null,
-    showTranscripts: false,
+    activeTranscriptId: null,
     // Phase 5 (LLM Wiki) — selected kind & entity in the Wiki tab
     activeWikiKind: null,
     activeWikiEntityId: null,
@@ -73,8 +73,9 @@ const el = {
     filterSource: document.getElementById('filter-source'),
     filterTypes: document.getElementById('filter-types'),
     sourceTree: document.getElementById('source-tree'),
-    transcriptsToggle: document.getElementById('transcripts-toggle'),
-    transcriptsTree: document.getElementById('transcripts-tree'),
+    unassignedSection: document.getElementById('unassigned-section'),
+    unassignedToggle: document.getElementById('unassigned-toggle'),
+    unassignedTree: document.getElementById('unassigned-tree'),
     // Removed: sourceDropdownSelect, lectureListSelect (elements deleted from HTML)
     sourceDropdownSelect: null,
     lectureListSelect: null,
@@ -482,22 +483,11 @@ function restoreExpanded() {
     } catch {
         state.expanded = new Set();
     }
-    try {
-        state.showTranscripts = localStorage.getItem('tdb-tree-show-transcripts') === '1';
-    } catch {
-        state.showTranscripts = false;
-    }
 }
 
 function persistExpanded() {
     try {
         localStorage.setItem('tdb-tree-expanded', JSON.stringify([...state.expanded]));
-    } catch { /* quota */ }
-}
-
-function persistShowTranscripts() {
-    try {
-        localStorage.setItem('tdb-tree-show-transcripts', state.showTranscripts ? '1' : '0');
     } catch { /* quota */ }
 }
 
@@ -565,9 +555,14 @@ function buildCourseTreeRoots() {
     return roots;
 }
 
-function buildTranscriptsTreeRoots() {
+function buildUnassignedSourcesRoots() {
+    // Sources that haven't been FK-matched to any scraped course. The
+    // auto-match migration in server/db.js handles exact-name equality;
+    // anything left in this bucket is genuinely standalone content
+    // (podcasts, YouTube playlists, legacy imports) or an exact-match miss
+    // a user can fix manually with a UPDATE sources SET course_id = ... .
     return (state.sources || [])
-        .filter(s => !String(s.id).startsWith('course-'))
+        .filter(s => s.course_id == null && !String(s.id).startsWith('course-'))
         .slice()
         .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
         .map(s => ({
@@ -637,6 +632,32 @@ async function ensureSourceLecturesLoaded(sourceId) {
     }
 }
 
+async function ensureLectureTranscriptsLoaded(lectureId) {
+    const cacheKey = `lecture-transcripts-${lectureId}`;
+    if (state.tree.cache.has(cacheKey)) return state.tree.cache.get(cacheKey);
+    try {
+        const transcripts = await api(`/api/courses/lectures/${lectureId}/transcripts`);
+        state.tree.cache.set(cacheKey, transcripts);
+        return transcripts;
+    } catch (err) {
+        console.warn('failed to load lecture transcripts', lectureId, err);
+        return [];
+    }
+}
+
+async function ensureCourseOrphanTranscriptsLoaded(courseId) {
+    const cacheKey = `course-orphan-transcripts-${courseId}`;
+    if (state.tree.cache.has(cacheKey)) return state.tree.cache.get(cacheKey);
+    try {
+        const transcripts = await api(`/api/courses/${courseId}/orphan-transcripts`);
+        state.tree.cache.set(cacheKey, transcripts);
+        return transcripts;
+    } catch (err) {
+        console.warn('failed to load course orphan transcripts', courseId, err);
+        return [];
+    }
+}
+
 function renderTreeNode(node, depth, parentEl) {
     const wrap = document.createElement('div');
     wrap.className = 'tree-node-wrap';
@@ -649,7 +670,17 @@ function renderTreeNode(node, depth, parentEl) {
 
     const chevron = document.createElement('span');
     chevron.className = 'tree-chevron';
-    const isLeaf = node.kind === 'lecture' || node.kind === 'lecture-orphan';
+    // Lectures become expandable when they have FK-linked transcripts to surface
+    // as children. Transcript nodes themselves are always leaves.
+    const lectureHasTranscripts = (
+        (node.kind === 'lecture' || node.kind === 'lecture-orphan')
+        && node.lecture
+        && Number(node.lecture.transcript_count || 0) > 0
+    );
+    const isLeaf = (
+        node.kind === 'transcript'
+        || ((node.kind === 'lecture' || node.kind === 'lecture-orphan') && !lectureHasTranscripts)
+    );
     if (isLeaf) {
         chevron.classList.add('leaf');
     } else {
@@ -679,7 +710,8 @@ function renderTreeNode(node, depth, parentEl) {
         (node.kind === 'source' && state.activeSource === String(node.rawId)) ||
         (node.kind === 'section' && state.activeSection === node.rawId) ||
         (node.kind === 'class' && state.activeClassNumber === node.classNumber) ||
-        ((node.kind === 'lecture' || node.kind === 'lecture-orphan') && state.activeLectureId === (node.lecture && node.lecture.id))
+        ((node.kind === 'lecture' || node.kind === 'lecture-orphan') && state.activeLectureId === (node.lecture && node.lecture.id)) ||
+        (node.kind === 'transcript' && state.activeTranscriptId === (node.transcript && node.transcript.id))
     );
     if (isActive) row.classList.add('active');
 
@@ -745,17 +777,28 @@ function renderChildren(parentNode, depth, childrenEl) {
             };
             renderTreeNode(secNode, depth, childrenEl);
         }
+        // Course-level orphan transcripts: legacy imports whose source matched
+        // this course but whose individual lecture didn't match any scraped
+        // lecture title. Surface them as an "Other Transcripts" group so they
+        // remain reachable from the course.
+        const course = (state.courses || []).find(c => c.id === parentNode.rawId);
+        const orphanCount = course ? Number(course.orphan_transcript_count || 0) : 0;
+        if (orphanCount > 0) {
+            renderTreeNode({
+                kind: 'course-orphans',
+                id: `course-orphans-${parentNode.rawId}`,
+                courseId: parentNode.rawId,
+                label: 'Other Transcripts',
+                count: orphanCount,
+            }, depth, childrenEl);
+        }
     } else if (parentNode.kind === 'section') {
         const groups = groupLecturesByClassNumber(parentNode.lectures || []);
         for (const grp of groups) {
             if (grp.kind === 'class') {
                 renderTreeNode(grp, depth, childrenEl);
             } else if (grp.kind === 'lecture-orphan') {
-                renderTreeNode({
-                    kind: 'lecture',
-                    label: grp.lecture.title || '(untitled)',
-                    lecture: grp.lecture,
-                }, depth, childrenEl);
+                renderTreeNode(makeLectureNode(grp.lecture, grp.lecture.title || '(untitled)'), depth, childrenEl);
             }
         }
     } else if (parentNode.kind === 'class') {
@@ -763,11 +806,7 @@ function renderChildren(parentNode, depth, childrenEl) {
             const stripped = (lec.title || '')
                 .replace(new RegExp(`^${parentNode.classNumber}\\s*[-–]\\s*`), '')
                 .trim();
-            renderTreeNode({
-                kind: 'lecture',
-                label: stripped || lec.title || '(untitled)',
-                lecture: lec,
-            }, depth, childrenEl);
+            renderTreeNode(makeLectureNode(lec, stripped || lec.title || '(untitled)'), depth, childrenEl);
         }
     } else if (parentNode.kind === 'source') {
         const lectures = state.tree.cache.get(`source-${parentNode.rawId}`) || [];
@@ -786,7 +825,59 @@ function renderChildren(parentNode, depth, childrenEl) {
                 lecture: lec,
             }, depth, childrenEl);
         }
+    } else if (parentNode.kind === 'lecture' || parentNode.kind === 'lecture-orphan') {
+        const transcripts = state.tree.cache.get(`lecture-transcripts-${parentNode.lecture.id}`) || [];
+        if (transcripts.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'tree-empty';
+            empty.textContent = '(no transcripts)';
+            empty.style.paddingLeft = `${6 + depth * 14}px`;
+            childrenEl.appendChild(empty);
+            return;
+        }
+        for (const t of transcripts) {
+            renderTreeNode({
+                kind: 'transcript',
+                id: `transcript-${t.id}`,
+                transcript: t,
+                label: transcriptLabel(t),
+            }, depth, childrenEl);
+        }
+    } else if (parentNode.kind === 'course-orphans') {
+        const transcripts = state.tree.cache.get(`course-orphan-transcripts-${parentNode.courseId}`) || [];
+        if (transcripts.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'tree-empty';
+            empty.textContent = '(no orphan transcripts)';
+            empty.style.paddingLeft = `${6 + depth * 14}px`;
+            childrenEl.appendChild(empty);
+            return;
+        }
+        for (const t of transcripts) {
+            renderTreeNode({
+                kind: 'transcript',
+                id: `transcript-${t.id}`,
+                transcript: t,
+                label: `${t.lecture || '(unnamed)'} — ${transcriptLabel(t)}`,
+            }, depth, childrenEl);
+        }
     }
+}
+
+function makeLectureNode(lec, label) {
+    return {
+        kind: 'lecture',
+        id: lec && lec.id != null ? `lecture-${lec.id}` : null,
+        label,
+        lecture: lec,
+    };
+}
+
+function transcriptLabel(t) {
+    // Prefer the transcript_type ("Live Class", "Q&A", …) when present —
+    // it's the most useful distinguisher when a lecture has multiple
+    // transcripts. Fall back to the filename.
+    return t.transcript_type || t.filename || `Transcript ${t.id}`;
 }
 
 function renderTree() {
@@ -803,27 +894,26 @@ function renderTree() {
             renderTreeNode(root, 0, el.sourceTree);
         }
     }
-    renderTranscriptsTree();
+    renderUnassignedSourcesTree();
 }
 
-function renderTranscriptsTree() {
-    if (!el.transcriptsTree) return;
-    el.transcriptsTree.innerHTML = '';
-    el.transcriptsTree.classList.toggle('hidden', !state.showTranscripts);
-    if (el.transcriptsToggle) {
-        el.transcriptsToggle.setAttribute('aria-expanded', state.showTranscripts ? 'true' : 'false');
+function renderUnassignedSourcesTree() {
+    if (!el.unassignedTree || !el.unassignedSection) return;
+    el.unassignedTree.innerHTML = '';
+    const roots = buildUnassignedSourcesRoots();
+    // Hide the entire section when there's nothing to show — keeps the
+    // sidebar uncluttered for users whose imports all matched a course.
+    el.unassignedSection.classList.toggle('hidden', roots.length === 0);
+    if (roots.length === 0) return;
+    const expanded = state.expanded.has('unassigned-root');
+    if (el.unassignedToggle) {
+        el.unassignedToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        el.unassignedToggle.dataset.count = String(roots.length);
     }
-    if (!state.showTranscripts) return;
-    const roots = buildTranscriptsTreeRoots();
-    if (roots.length === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'tree-empty';
-        empty.textContent = '(no other sources)';
-        el.transcriptsTree.appendChild(empty);
-        return;
-    }
+    el.unassignedTree.classList.toggle('hidden', !expanded);
+    if (!expanded) return;
     for (const root of roots) {
-        renderTreeNode(root, 0, el.transcriptsTree);
+        renderTreeNode(root, 0, el.unassignedTree);
     }
 }
 
@@ -839,6 +929,12 @@ async function toggleNode(node) {
             await ensureCourseTreeLoaded(node.rawId);
         } else if (node.kind === 'source') {
             await ensureSourceLecturesLoaded(node.rawId);
+        } else if (node.kind === 'lecture' || node.kind === 'lecture-orphan') {
+            if (node.lecture && node.lecture.id != null) {
+                await ensureLectureTranscriptsLoaded(node.lecture.id);
+            }
+        } else if (node.kind === 'course-orphans') {
+            await ensureCourseOrphanTranscriptsLoaded(node.courseId);
         }
     }
     persistExpanded();
@@ -891,10 +987,20 @@ async function selectTreeNode(node) {
         const lec = node.lecture;
         if (lec && lec.id != null) {
             state.activeLectureId = lec.id;
+            state.activeTranscriptId = null;
             // course_lectures rows have section_id; non-course lectures don't
             const detailId = lec.section_id != null ? `clec-${lec.id}` : lec.id;
             loadTranscriptDetail(detailId);
         }
+    } else if (node.kind === 'transcript') {
+        const t = node.transcript;
+        if (t && t.id != null) {
+            state.activeTranscriptId = t.id;
+            loadTranscriptDetail(t.id);
+        }
+    } else if (node.kind === 'course-orphans') {
+        await toggleNode(node);
+        return;
     }
     renderTree();
 }
@@ -918,7 +1024,7 @@ async function expandToActive() {
         }
     } else if (state.activeSource) {
         state.expanded.add(`source-${state.activeSource}`);
-        state.showTranscripts = true;
+        state.expanded.add('unassigned-root');
         await ensureSourceLecturesLoaded(state.activeSource);
     }
 }
@@ -1785,12 +1891,16 @@ function setupEventListeners() {
     // Back button
     el.backBtn.addEventListener('click', goBack);
 
-    // "Show transcripts" toggle
-    if (el.transcriptsToggle) {
-        el.transcriptsToggle.addEventListener('click', async () => {
-            state.showTranscripts = !state.showTranscripts;
-            persistShowTranscripts();
-            renderTranscriptsTree();
+    // "Unassigned Transcripts" collapse toggle
+    if (el.unassignedToggle) {
+        el.unassignedToggle.addEventListener('click', () => {
+            if (state.expanded.has('unassigned-root')) {
+                state.expanded.delete('unassigned-root');
+            } else {
+                state.expanded.add('unassigned-root');
+            }
+            persistExpanded();
+            renderUnassignedSourcesTree();
         });
     }
 }
