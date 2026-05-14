@@ -44,32 +44,35 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
 
     // Re-resolve master URL via Puppeteer — Hotmart manifest URLs are session-bound and short-lived.
     //
-    // Capture two kinds of request as an ordered event stream:
-    //  • Iframe page loads at `…/embed/<embedId>` (the Hotmart player URL).
-    //    These tell us WHICH iframe is starting to load right now.
-    //  • The HLS master/variant playlists that follow (`.m3u8`). These get
-    //    attributed to the most recently seen embed_id, because that's the
-    //    iframe whose player is firing them.
+    // We attribute each captured .m3u8 to the iframe that fired it by walking
+    // Puppeteer's frame tree (request.frame() → frame.parentFrame() …) until
+    // we find a frame whose URL contains `/embed/<id>` — that's Hotmart's
+    // iframe page for one of the videos. The <id> there matches the same
+    // pattern the static-DOM querySelectorAll uses to populate
+    // `liveEmbedIds`, so attribution is deterministic regardless of the
+    // network-completion race between iframes.
     //
-    // This replaces the previous "capture any .m3u8 in network order" approach,
-    // which produced non-deterministic file ordering for multi-video lectures
-    // (Hotmart's iframes load asynchronously). With the event stream + embed
-    // attribution, masterList ends up in DOM order regardless of player race
-    // conditions on page load.
+    // (Earlier rev tried matching `/embed/<id>` in the REQUEST URLs themselves
+    // — but Hotmart's player code makes many internal requests with
+    // /embed/<different-id>/... paths whose ids are different from the
+    // iframe-src ids, so no m3u8 ever paired to a liveEmbedId. The frame-tree
+    // approach sidesteps that entirely.)
     const { browser, page } = await createAuthenticatedBrowser();
-    const events = []; // ordered: { type: 'embed'|'m3u8', embedId?, url, headers }
+    const m3u8Captures = []; // { url, headers, sourceEmbedId }
     page.on('request', (req) => {
         const url = req.url();
-        if (url.includes('hotmart')) {
-            const embedMatch = url.match(/\/embed\/([A-Za-z0-9_-]+)(?:[/?#]|$)/);
-            if (embedMatch) {
-                events.push({ type: 'embed', embedId: embedMatch[1], url, headers: req.headers() });
-                return;
+        if (!url.toLowerCase().includes('.m3u8')) return;
+        let sourceEmbedId = null;
+        try {
+            let f = req.frame();
+            while (f) {
+                const fUrl = (f.url && f.url()) || '';
+                const m = fUrl.match(/\/embed\/([A-Za-z0-9_-]+)/);
+                if (m) { sourceEmbedId = m[1]; break; }
+                f = f.parentFrame ? f.parentFrame() : null;
             }
-        }
-        if (url.toLowerCase().includes('.m3u8')) {
-            events.push({ type: 'm3u8', url, headers: req.headers() });
-        }
+        } catch { /* request.frame() can throw if frame already detached */ }
+        m3u8Captures.push({ url, headers: req.headers(), sourceEmbedId });
     });
 
     // The scraper records the iframe embed IDs in DOM order. If they're absent
@@ -139,31 +142,22 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
         await browser.close().catch(() => { /* ignore — may already be closed by abort handler */ });
     }
 
-    if (events.filter(e => e.type === 'm3u8').length === 0) {
+    if (m3u8Captures.length === 0) {
         return { error: 'No HLS manifest captured within dwell window' };
     }
 
-    // Walk the event stream: every m3u8 belongs to the most recent /embed/<id>
-    // request, which is the iframe that fired it. This pairs each captured
-    // manifest with its source iframe deterministically, regardless of the
-    // network-event order between iframes.
+    // Group captured m3u8s by the embed_id of the iframe they came from.
     const manifestsByEmbed = new Map();
-    let currentEmbedId = null;
-    for (const ev of events) {
-        if (ev.type === 'embed') {
-            currentEmbedId = ev.embedId;
-            if (!manifestsByEmbed.has(currentEmbedId)) manifestsByEmbed.set(currentEmbedId, []);
-        } else if (ev.type === 'm3u8' && currentEmbedId != null) {
-            manifestsByEmbed.get(currentEmbedId).push({ url: ev.url, headers: ev.headers });
-        }
+    for (const m of m3u8Captures) {
+        if (!m.sourceEmbedId) continue;
+        if (!manifestsByEmbed.has(m.sourceEmbedId)) manifestsByEmbed.set(m.sourceEmbedId, []);
+        manifestsByEmbed.get(m.sourceEmbedId).push({ url: m.url, headers: m.headers });
     }
 
-    // Build the master list in DOM order using liveEmbedIds (a static-DOM
-    // querySelectorAll, so its order matches the page's actual layout). For
-    // each DOM slot, pick the first dedupe-by-parent manifest seen on that
-    // iframe's player. Slots with no captured manifest are skipped — the
-    // archive becomes sparse instead of misnaming files. Single-iframe and
-    // no-iframe pages fall back to a flat dedupe of all m3u8 events.
+    // Build masterList in DOM order using liveEmbedIds (static DOM
+    // querySelectorAll). Slots with no captured manifest are skipped, which
+    // makes the archive SPARSE rather than misnamed — filenames are derived
+    // from domIndex below.
     const masterList = []; // [{ url, headers, embedId, domIndex }]
     if (liveEmbedIds.length > 0) {
         for (let domIndex = 0; domIndex < liveEmbedIds.length; domIndex++) {
@@ -182,13 +176,13 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
             if (master) masterList.push({ ...master, embedId, domIndex });
         }
     } else {
-        const flat = events.filter(e => e.type === 'm3u8');
+        // No iframes (single-video lecture inline, or fallback). Flat dedupe.
         const byParent = new Map();
-        for (const m of flat) {
+        for (const m of m3u8Captures) {
             try {
                 const u = new URL(m.url);
                 const parent = `${u.origin}${u.pathname.substring(0, u.pathname.lastIndexOf('/'))}`;
-                if (!byParent.has(parent)) byParent.set(parent, m);
+                if (!byParent.has(parent)) byParent.set(parent, { url: m.url, headers: m.headers });
             } catch { /* skip */ }
         }
         let i = 0;
@@ -199,7 +193,14 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
     }
 
     if (masterList.length === 0) {
-        return { error: 'No HLS manifest could be attributed to any iframe' };
+        console.warn(`[archive] lecture ${lecture.id}: frame-attribution produced 0 matches.`);
+        console.warn(`  liveEmbedIds (${liveEmbedIds.length}): ${JSON.stringify(liveEmbedIds)}`);
+        console.warn(`  embedIds seen in captures (${manifestsByEmbed.size}): ${JSON.stringify([...manifestsByEmbed.keys()])}`);
+        console.warn(`  m3u8 captures (${m3u8Captures.length}), unattributed (${m3u8Captures.filter(m => !m.sourceEmbedId).length}):`);
+        for (const c of m3u8Captures.slice(0, 6)) console.warn(`    sourceEmbedId=${c.sourceEmbedId} ${c.url}`);
+        return {
+            error: `No HLS manifest could be attributed to any iframe (${m3u8Captures.length} m3u8 captures, ${manifestsByEmbed.size} distinct source embed_ids, ${liveEmbedIds.length} iframes in DOM — see server log)`,
+        };
     }
     // Total-known signal: emit once with videoTotal so the UI can keep showing
     // "Video X/N" through the rest of the lecture instead of losing the count
@@ -578,24 +579,25 @@ export async function reorderLectureVideosByDom(lectureId, { dryRun = false } = 
         : `${SCHOOL_URL}${lecture.url}`;
 
     const { browser, page } = await createAuthenticatedBrowser();
-    // Same event-stream + embed-id attribution that downloadLectureVideo
-    // uses. Network-completion order between iframes isn't reliable on
-    // Hotmart, so we don't trust it — we pair each captured m3u8 with the
-    // most recent /embed/<id> request, which is the iframe whose player
-    // produced it.
-    const events = [];
+    // Same frame-attribution capture downloadLectureVideo uses — walk
+    // request.frame() up the parentFrame chain until we find a frame whose
+    // URL contains /embed/<id>, that's the iframe id which matches what the
+    // static DOM query returns in liveEmbedIds.
+    const m3u8Captures = [];
     page.on('request', (req) => {
         const url = req.url();
-        if (url.includes('hotmart')) {
-            const embedMatch = url.match(/\/embed\/([A-Za-z0-9_-]+)(?:[/?#]|$)/);
-            if (embedMatch) {
-                events.push({ type: 'embed', embedId: embedMatch[1], url, headers: req.headers() });
-                return;
+        if (!url.toLowerCase().includes('.m3u8')) return;
+        let sourceEmbedId = null;
+        try {
+            let f = req.frame();
+            while (f) {
+                const fUrl = (f.url && f.url()) || '';
+                const m = fUrl.match(/\/embed\/([A-Za-z0-9_-]+)/);
+                if (m) { sourceEmbedId = m[1]; break; }
+                f = f.parentFrame ? f.parentFrame() : null;
             }
-        }
-        if (url.toLowerCase().includes('.m3u8')) {
-            events.push({ type: 'm3u8', url, headers: req.headers() });
-        }
+        } catch { /* frame detached */ }
+        m3u8Captures.push({ url, headers: req.headers(), sourceEmbedId });
     });
 
     try {
@@ -625,17 +627,12 @@ export async function reorderLectureVideosByDom(lectureId, { dryRun = false } = 
             await new Promise(r => setTimeout(r, HLS_DWELL_MS));
         }
 
-        // Group captured m3u8s by their preceding /embed/<id> request, then
-        // build masterList in DOM order using liveEmbedIds (static DOM order).
+        // Group captured m3u8s by the embed_id of the iframe they came from.
         const manifestsByEmbed = new Map();
-        let currentEmbedId = null;
-        for (const ev of events) {
-            if (ev.type === 'embed') {
-                currentEmbedId = ev.embedId;
-                if (!manifestsByEmbed.has(currentEmbedId)) manifestsByEmbed.set(currentEmbedId, []);
-            } else if (ev.type === 'm3u8' && currentEmbedId != null) {
-                manifestsByEmbed.get(currentEmbedId).push({ url: ev.url, headers: ev.headers });
-            }
+        for (const m of m3u8Captures) {
+            if (!m.sourceEmbedId) continue;
+            if (!manifestsByEmbed.has(m.sourceEmbedId)) manifestsByEmbed.set(m.sourceEmbedId, []);
+            manifestsByEmbed.get(m.sourceEmbedId).push({ url: m.url, headers: m.headers });
         }
         const masterList = [];
         for (let domIndex = 0; domIndex < liveEmbedIds.length; domIndex++) {
