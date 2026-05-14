@@ -551,6 +551,24 @@ export function initializeDb() {
     console.warn(`[db] Transcripts migration: matched ${transcriptsMatched.changes} transcript(s) to lectures by exact title`);
   }
 
+  // Per-video archive failure log. One row per (lecture_id, video_index)
+  // unresolved failure; rows are cleared automatically on the next successful
+  // download for the same slot. Lets the UI surface "what failed and why"
+  // without scrolling back through ephemeral SSE detail messages.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS archive_failures (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lecture_id INTEGER NOT NULL,
+      video_index INTEGER NOT NULL,
+      filename TEXT,
+      error_message TEXT NOT NULL,
+      attempted_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (lecture_id, video_index),
+      FOREIGN KEY (lecture_id) REFERENCES course_lectures(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_archive_failures_lecture ON archive_failures(lecture_id);
+  `);
+
   return db;
 }
 

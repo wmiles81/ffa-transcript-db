@@ -2435,6 +2435,9 @@ async function startArchive(courseId, scope = {}) {
 
     let total = 0;
     const lectureRows = new Map(); // lectureId -> <li> element
+    // lectureId -> [{ videoIndex, errorMessage, filename, title }] — collected
+    // from SSE 'video-error' events so the Summary can list every partial.
+    const lectureFailures = new Map();
 
     cancelBtn.onclick = async () => {
         cancelBtn.disabled = true;
@@ -2548,6 +2551,18 @@ async function startArchive(courseId, scope = {}) {
                         } else if (event.status === 'error') {
                             li.textContent = `[${event.index}/${total}] ${event.title}${videoPart} — ${event.detail}`;
                             li.className = 'archive-lecture-row error';
+                        } else if (event.status === 'video-error') {
+                            const list = lectureFailures.get(event.lectureId) || [];
+                            list.push({
+                                videoIndex: event.videoIndex,
+                                filename: event.filename,
+                                errorMessage: event.errorMessage,
+                                title: event.title,
+                            });
+                            lectureFailures.set(event.lectureId, list);
+                            // Don't overwrite the row's downloading state — the
+                            // loop continues to the next video. The Summary will
+                            // surface the collected failures at the end.
                         }
                         break;
                     }
@@ -2557,6 +2572,29 @@ async function startArchive(courseId, scope = {}) {
                         const partialLine = event.partial
                             ? `<li>Partial (some videos failed): ${event.partial}</li>`
                             : '';
+                        // Render per-video failures collected during the run so
+                        // the user can see exactly which video and why before
+                        // deciding whether to retry. The same data is persisted
+                        // in archive_failures and available via
+                        // GET /api/archive-failures for later sessions.
+                        let failuresBlock = '';
+                        if (lectureFailures.size > 0) {
+                            const items = [];
+                            for (const [lecId, list] of lectureFailures.entries()) {
+                                for (const f of list) {
+                                    const tail = (f.errorMessage || '').split('\n').slice(-2).join(' ').slice(0, 240);
+                                    items.push(`
+                                        <li>
+                                            <div class="archive-failure-head"><strong>${escapeHtml(f.title || `Lecture ${lecId}`)}</strong> — video ${f.videoIndex}${f.filename ? ` (${escapeHtml(f.filename)})` : ''}</div>
+                                            <pre class="archive-failure-msg">${escapeHtml(tail)}</pre>
+                                        </li>`);
+                                }
+                            }
+                            failuresBlock = `
+                                <h4 class="archive-failures-title">Failed videos</h4>
+                                <ul class="archive-failures-list">${items.join('')}</ul>
+                                <p class="archive-failures-hint">Re-running Archive Videos will retry just these — completed videos are skipped by the per-file idempotency check.</p>`;
+                        }
                         summary.innerHTML = `
                             <h3>Summary</h3>
                             <ul>
@@ -2568,6 +2606,7 @@ async function startArchive(courseId, scope = {}) {
                                 <li>Elapsed: ${Math.round(event.elapsedMs / 1000)}s</li>
                                 ${event.interrupted ? '<li><em>Cancelled</em></li>' : ''}
                             </ul>
+                            ${failuresBlock}
                         `;
                         cancelBtn.classList.add('hidden');
                         doneBtn.classList.remove('hidden');

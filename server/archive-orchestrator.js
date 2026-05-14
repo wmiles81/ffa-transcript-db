@@ -113,6 +113,10 @@ export async function archiveCourseVideos(courseId, opts = {}) {
                     onProgress: (msg, _pct, extra) => {
                         const event = { ...baseEvent, status: 'downloading', detail: msg };
                         if (extra && typeof extra === 'object') Object.assign(event, extra);
+                        // Per-video failures get their own status so the
+                        // renderer can accumulate them without each one being
+                        // overwritten by the next ffmpeg time= update.
+                        if (extra?.videoError) event.status = 'video-error';
                         onProgress(event);
                     },
                 });

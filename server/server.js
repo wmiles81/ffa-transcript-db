@@ -906,6 +906,30 @@ app.get('/api/system/ffmpeg', async (_req, res) => {
     }
 });
 
+// GET /api/archive-failures — list unresolved per-video download failures.
+// Rows are inserted by media-downloader on ffmpeg error and cleared on the
+// next successful download for the same (lecture_id, video_index). The UI
+// reads this to surface what to retry without scrolling back through the
+// archive modal's SSE log.
+app.get('/api/archive-failures', (req, res) => {
+    const db = getDb();
+    const courseFilter = req.query.course_id ? Number(req.query.course_id) : null;
+    const where = courseFilter ? 'WHERE cl.course_id = ?' : '';
+    const params = courseFilter ? [courseFilter] : [];
+    const rows = db.prepare(`
+        SELECT af.id, af.lecture_id, af.video_index, af.filename,
+               af.error_message, af.attempted_at,
+               cl.title AS lecture_title,
+               c.id AS course_id, c.title AS course_title
+        FROM archive_failures af
+        JOIN course_lectures cl ON cl.id = af.lecture_id
+        JOIN courses c ON c.id = cl.course_id
+        ${where}
+        ORDER BY af.attempted_at DESC
+    `).all(...params);
+    res.json(rows);
+});
+
 // Phase 4b: POST /api/courses/:id/archive-videos — SSE stream of archive progress
 // Active jobs tracked so DELETE can abort by courseId.
 const _activeArchiveJobs = new Map(); // courseId -> AbortController

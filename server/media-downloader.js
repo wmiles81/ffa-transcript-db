@@ -196,13 +196,39 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
             if (signal?.aborted || err.message === 'aborted') {
                 return { skipped: true, reason: 'aborted' };
             }
-            // Per-video failure: log but continue with remaining videos
-            onProgress(`Video ${i + 1} failed: ${err.message}`, null, videoInfo);
+            // Per-video failure: persist for diagnosis, console-warn the full
+            // stderr tail (already embedded in err.message by runFfmpeg), then
+            // continue with the remaining videos so one bad manifest doesn't
+            // kill the whole multi-video archive.
+            console.warn(`[archive] lecture ${lecture.id} video ${i + 1}/${masterList.length} (${filename}) failed:\n${err.message}`);
+            try {
+                getDb().prepare(`
+                    INSERT INTO archive_failures (lecture_id, video_index, filename, error_message, attempted_at)
+                    VALUES (?, ?, ?, ?, datetime('now'))
+                    ON CONFLICT(lecture_id, video_index) DO UPDATE SET
+                        filename = excluded.filename,
+                        error_message = excluded.error_message,
+                        attempted_at = excluded.attempted_at
+                `).run(lecture.id, i + 1, filename, String(err.message || 'unknown error'));
+            } catch (dbErr) {
+                console.warn(`[archive] failed to record archive_failures row: ${dbErr.message}`);
+            }
+            onProgress(`Video ${i + 1} failed: ${err.message}`, null, {
+                ...videoInfo,
+                videoError: true,
+                errorMessage: String(err.message || ''),
+                filename,
+            });
             continue;
         }
 
         fs.renameSync(tmpDest, dest);
         downloadedPaths.push(relativize(dest));
+        // Clear any prior failure row for this slot — the retry succeeded.
+        try {
+            getDb().prepare("DELETE FROM archive_failures WHERE lecture_id = ? AND video_index = ?")
+                .run(lecture.id, i + 1);
+        } catch { /* ignore */ }
         try { sizesBytes.push(fs.statSync(dest).size); } catch { sizesBytes.push(null); }
         try {
             const d = await probeDuration(dest);
