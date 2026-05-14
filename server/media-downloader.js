@@ -87,6 +87,10 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
     const onAbortClose = () => { browser.close().catch(() => { /* ignore */ }); };
     signal?.addEventListener('abort', onAbortClose, { once: true });
 
+    // Hoisted so the post-try block can see them — the embed-id matching
+    // and DOM-order masterList build both depend on liveEmbedIds.
+    let liveEmbedIds = [];
+
     try {
         try {
             await page.goto(lectureUrl, { waitUntil: 'networkidle2', timeout: NAVIGATE_TIMEOUT_MS });
@@ -98,7 +102,7 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
         // Always re-read iframe embed IDs from the live page so the archiver
         // doesn't rely on stale scraper output. If the lecture row has IDs
         // recorded, they take precedence for the eventual ordering.
-        const liveEmbedIds = await page.evaluate(() => {
+        liveEmbedIds = await page.evaluate(() => {
             const frames = document.querySelectorAll('iframe[src*="hotmart"], iframe[src*="cf-embed"], iframe[src*="player.hotmart"]');
             return [...frames].map(f => {
                 const src = f.src || '';
