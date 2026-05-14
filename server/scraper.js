@@ -577,8 +577,13 @@ export async function scrapeCourse(courseUrl, onProgress = () => { }, options = 
                                 };
                                 segments.push(current);
                             } else if (cls.includes('lecture-attachment-type-file')) {
+                                // Some lecture pages have a per-video .txt AND a
+                                // combined-all-videos .txt as the last attachment.
+                                // Keep the FIRST one we see per video segment so
+                                // Video N's transcript is Part N's text, not the
+                                // combined block that comes later in the page.
                                 const link = att.querySelector('a.download[href$=".txt"]');
-                                if (link && current) current.downloadUrl = link.href;
+                                if (link && current && !current.downloadUrl) current.downloadUrl = link.href;
                             } else if (cls.includes('lecture-attachment-type-text')) {
                                 const textBox = att.querySelector('.lecture-text-container, .fr-view, .trix-content, .ql-editor') || att;
                                 const t = (textBox.innerText || '').trim();
@@ -775,8 +780,11 @@ export async function rescrapeLectureTranscripts(lectureId) {
                     };
                     segments.push(current);
                 } else if (cls.includes('lecture-attachment-type-file')) {
+                    // Same first-download-wins rule as scrapeCourse — prevents
+                    // a combined-all-videos .txt at the bottom of the page
+                    // from clobbering Video N's per-part .txt.
                     const link = att.querySelector('a.download[href$=".txt"]');
-                    if (link && current) current.downloadUrl = link.href;
+                    if (link && current && !current.downloadUrl) current.downloadUrl = link.href;
                 } else if (cls.includes('lecture-attachment-type-text')) {
                     const textBox = att.querySelector('.lecture-text-container, .fr-view, .trix-content, .ql-editor') || att;
                     const t = (textBox.innerText || '').trim();
