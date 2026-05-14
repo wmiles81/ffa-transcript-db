@@ -633,6 +633,19 @@ export async function reorderLectureVideosByDom(lectureId, { dryRun = false } = 
             throw new Error(`captured ${masterList.length} manifest(s) but ${existingCount} file(s) exist on disk — likely a transient page-load issue, refusing to proceed`);
         }
 
+        // Stricter guard: if probeManifestDuration failed for any DOM position
+        // (e.g., Hotmart's per-manifest auth token expired before we could
+        // fetch its variant playlist), the matcher only has expected durations
+        // for a subset of slots. Stage 2 then renames only a few files; Stage 3
+        // tries to restore the rest to their original names but those slots
+        // may already be occupied by Stage 2's placements, leaving orphan
+        // .reorder-tmp-N files. Better to refuse the whole operation than
+        // ship the user a partial state.
+        const probedCount = expected.filter(e => e.expectedSec != null).length;
+        if (probedCount < expected.length) {
+            throw new Error(`only probed ${probedCount} of ${expected.length} manifest durations — refusing to proceed (Hotmart's tokens often expire on the variant playlist; try again)`);
+        }
+
         // Idempotency guard: if every existing file is already in the slot
         // its filename claims (and that slot's content matches the expected
         // DOM duration), there's nothing to do. Re-clicking the button when
