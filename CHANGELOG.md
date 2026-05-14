@@ -2,6 +2,32 @@
 
 All notable changes to TranscriptDB. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.2.0] — 2026-05-14
+
+### Added
+
+- **LLM Wiki layer** — a Karpathy-style three-layer wiki sits on top of the transcript DB, extracting Authors, Techniques, Tools, and Debates from each scraped lecture via OpenRouter. New sidebar tab with entity grids, claim ledger, and a rebuild flow with cancellable SSE progress. Auto-ingest runs after every course scrape.
+- **Multi-video transcripts** — Teachable lectures with more than one Hotmart embed now produce one transcript per video, tagged with `video_index` on `course_chunks`. The detail view filters the transcript pane to the active video tab. Archive downloads now happen in DOM order, and `video_embed_ids` is persisted alongside `video_local_paths` so file order matches what the user sees on the page.
+- **Transcripts under their lectures** — legacy imported transcripts (`sources` + `transcripts` tables) can now be FK-linked to scraped course content. New nullable columns `sources.course_id` and `transcripts.lecture_id` with a one-time conservative auto-match migration (exact normalized-name equality only — never fuzzy, never overwrites manual assignments). The wiki ingest pulls FK-linked transcript text alongside scraped chunks.
+- **Build version badge** in the header (`v2.2.0 · <sha>`) — auto-stamped on every build by `scripts/stamp-version.mjs`.
+- **New API endpoints:**
+  - `GET /api/courses/lectures/:id/transcripts` — per-lecture FK-linked transcripts
+  - `GET /api/courses/:courseId/orphan-transcripts` — source-matched but lecture-unmatched
+  - `GET /api/wiki/entities` / `entity/:id` / `log`
+  - `POST /api/wiki/ingest/:lectureId` / `rebuild` / `lint`
+- **Archive cancel** now actually cancels — the abort signal is plumbed through to ffmpeg (SIGKILL) and Puppeteer dwell (abortable sleep). Cancel responds within a second instead of waiting out the ~20s dwell.
+
+### Changed
+
+- **Sidebar restructure** — the standalone "Show transcripts ▾" toggle introduced in 2.1.0 is gone. Lectures with linked transcripts now expand to reveal Transcript child nodes; each course shows an "Other Transcripts" child group for source-matched-but-lecture-unmatched content; truly standalone imports (podcasts, YouTube, etc.) live in a new collapsible "Unassigned Transcripts" section at the bottom of the sidebar (auto-hidden when empty).
+- **Player chrome** — hides irrelevant native menu items and centers the video container.
+- **Independent pane scroll** in the detail view; the player resize handle now works on both axes.
+- **Idempotency** — a complete N≥1 archive (any recorded video paths all present on disk) short-circuits without re-dwelling. Force-refresh and re-scrape still bust the cache.
+
+### Removed
+
+- `state.showTranscripts`, `tdb-tree-show-transcripts` localStorage flag, the `transcripts-toggle` button and its CSS. Transcripts are now first-class children inside the course tree.
+
 ## [2.1.0] — 2026-05-12
 
 ### Added
