@@ -352,6 +352,7 @@
       <div class="nav-item" data-section="types"><span class="nav-item-icon">🏷</span> Content Types</div>
       <div class="nav-item" data-section="teachable"><span class="nav-item-icon">🎓</span> Teachable Courses</div>
       <div class="nav-item" data-section="archive"><span class="nav-item-icon">💾</span> Archiving Videos</div>
+      <div class="nav-item" data-section="wiki"><span class="nav-item-icon">📚</span> LLM Wiki</div>
 
       <div class="nav-section-label">Configuration</div>
       <div class="nav-item" data-section="settings"><span class="nav-item-icon">⚙️</span> Settings</div>
@@ -414,8 +415,12 @@
           <li><strong>Individual lecture</strong> — click to open the detail view directly</li>
         </ul>
         <p>
-          Below the course tree, a <strong>Show transcripts ▾</strong> toggle reveals non-course sources such as Summit transcript collections. Click it again to collapse.
+          Legacy imported transcripts (Summit transcripts, podcasts, standalone JSON imports) live in two places:
         </p>
+        <ul>
+          <li><strong>Inside a course</strong> — when an import has been FK-linked to a scraped lecture, it renders as a <em>Transcript</em> child of that lecture (and the per-video tab filter applies). When it's matched to a course but not a specific lecture, it appears in an <em>Other Transcripts</em> group inside that course.</li>
+          <li><strong>Unassigned Transcripts</strong> — a collapsible section at the bottom of the sidebar (auto-hidden when empty) holds imports that aren't matched to any course. A one-time auto-match on startup uses exact normalized-name equality between source name and course title; the rest stay here until manually linked.</li>
+        </ul>
 
         <h2>Resizing the sidebar</h2>
         <p>
@@ -560,7 +565,12 @@
 
         <h2>Multi-video tabs</h2>
         <p>
-          Some lectures contain more than one Hotmart-hosted video (for example, FFA Software Support Class Episodes with multiple segments). When a lecture has multiple archived video files, the player shows tabs above the video: <strong>Video 1</strong>, <strong>Video 2</strong>, etc. Click a tab to switch the player to that file. Timestamps in the transcript correspond to whichever video is currently active.
+          Some lectures contain more than one Hotmart-hosted video (for example, FFA Software Support Class Episodes or weekly Summit sessions split into Parts 1–5). When a lecture has multiple archived video files, the player shows tabs above the video: <strong>Video 1</strong>, <strong>Video 2</strong>, etc. Click a tab to switch the player to that file. The transcript pane below filters to the chunks tagged with that video's <code>video_index</code>, so you see only the Part N text while watching the Part N video.
+        </p>
+
+        <h2>Auto-sequence</h2>
+        <p>
+          On lectures with 2+ videos, an <strong>Auto-sequence</strong> checkbox appears next to the speed selector. Tick it and the player will advance to the next video tab automatically when the current one ends, then keep playing — no clicks needed between Parts. Chains stop at the last video; there's no cross-lecture chaining. Setting persists in localStorage across lectures and app restarts.
         </p>
 
         <h2>Playback speed</h2>
@@ -586,8 +596,13 @@
 
         <h2>Sidebar tree — transcripts</h2>
         <p>
-          Below the course groups, a <strong>Show transcripts ▾</strong> toggle reveals all non-course transcript sources (Summit sessions, imported collections, etc.). Click a source to browse it. Click again to collapse the transcripts panel.
+          Imported transcript sources (Summit sessions, podcast collections, standalone JSON imports) appear in three places depending on whether they've been linked to a scraped course:
         </p>
+        <ul>
+          <li><strong>As a child of a lecture</strong> — when the import has been FK-linked to a specific course lecture, it renders as a <em>Transcript</em> child of that lecture, and the per-video tab filter applies.</li>
+          <li><strong>In an "Other Transcripts" group inside a course</strong> — when matched to a course but not a specific lecture.</li>
+          <li><strong>In the "Unassigned Transcripts" section</strong> at the bottom of the sidebar — collapsible, auto-hidden when empty. A startup migration auto-matches sources to courses by exact normalized-name equality; everything else stays here until you manually link it.</li>
+        </ul>
 
         <h2>Type filter chips</h2>
         <p>The <strong>Type</strong> chips filter content by recording type. See the <strong>Content Types</strong> section for what each type means. Only one type can be active at a time; click <strong>All</strong> to clear the type filter.</p>
@@ -698,20 +713,41 @@
 
         <h2>How to archive</h2>
         <ol class="step-list">
-          <li>Open a course by clicking it in the sidebar tree.</li>
-          <li>Click the <strong>Archive Videos</strong> button in the course detail header.</li>
-          <li>A progress modal opens, showing each lecture as it's processed. The scraper visits each lecture page, extracts the Hotmart video URL(s), and downloads them via ffmpeg.</li>
-          <li>When done, close the modal. Lectures with archived video now show a player in their detail view.</li>
+          <li>Open a course, section, or class group in the sidebar tree. The Archive Videos scope follows what you've clicked — a class group archives just that class's lectures, a section archives its section, a bare course node archives the whole course.</li>
+          <li>Click the <strong>↓ Archive Videos</strong> button in the course detail header. A confirm dialog names the count: <em>"Archive 3 lectures from class 231?"</em></li>
+          <li>A floating progress panel appears in the bottom-right of the app. It's non-modal — you can keep browsing other lectures while the archive runs in the background. The headline shows <code>[N/M] Title · Video X/Y · ffmpeg: HH:MM:SS</code> so you can see lecture progress and per-video progress simultaneously.</li>
+          <li>When done, close the panel. Lectures with archived video now show a player in their detail view.</li>
         </ol>
 
         <div class="tip-box">
-          <strong>Tip:</strong> You can cancel the archive run mid-way using the Cancel button in the progress modal. Already-downloaded lectures are kept. Re-running archive is safe — fully-archived lectures are skipped automatically.
+          <strong>Tip:</strong> You can cancel mid-run using the Cancel button. Already-downloaded files are kept. Re-running archive is safe — fully-archived lectures are skipped automatically. Closing the panel (✕) does <em>not</em> cancel — only Cancel does.
         </div>
 
         <h2>Multi-video lectures</h2>
         <p>
-          Lectures with more than one Hotmart embed (e.g., Bookcamp episodes with multiple segments) have all their videos downloaded. Files are named <code>video.mp4</code>, <code>video_2.mp4</code>, <code>video_3.mp4</code>, etc. Each file corresponds to a tab in the video player.
+          Lectures with more than one Hotmart embed (Bookcamp episodes, weekly Summit sessions, multi-Part lessons) have all their videos downloaded. Each captured <code>.m3u8</code> is attributed to its source iframe via Puppeteer's frame API, so files end up in true DOM order on the first run — <code>video.mp4</code> = first video on the page, <code>video_2.mp4</code> = second, etc. Each file corresponds to a tab in the video player.
         </p>
+
+        <h2>Shift-click to force re-download</h2>
+        <p>
+          Hold <kbd>Shift</kbd> while clicking <strong>↓ Archive Videos</strong> to force re-download — bypasses both the "already archived" outer shortcut and the per-file existence check. Useful for replacing a known-bad file without manually deleting it on disk. The confirm dialog adds <em>"(force re-download, ignoring existing files)"</em> so you can see what's about to happen.
+        </p>
+
+        <h2>Honest partial-success</h2>
+        <p>
+          When a lecture finishes with N-1 of N videos (one of the m3u8 captures failed, or one download truncated), the row turns amber with a <code>downloaded (3 of 4 videos · 1 failed)</code> label. The Done summary lists every failed video with its filename and a tail of the ffmpeg stderr — paste those lines back if you're diagnosing a recurring issue. Re-running Archive Videos retries just the missing slots.
+        </p>
+
+        <h2>Truncation detection</h2>
+        <p>
+          Every download is compared against the manifest's expected duration. If the file comes back more than 5% short (most often because Hotmart's signed URL token expired mid-fetch, or the HLS playlist lacked an <code>EXT-X-ENDLIST</code> marker), it's recorded as a failure in the <code>archive_failures</code> table even though ffmpeg exited code 0. The next archive run will retry that slot.
+        </p>
+
+        <h2>Repair buttons on the lecture detail header</h2>
+        <ul>
+          <li><strong>Re-scrape transcript</strong> — re-runs the per-video chunk extraction on a single lecture. Useful when an old lecture was scraped before per-Part indexing landed and its tabs all show the same combined transcript.</li>
+          <li><strong>Re-order videos</strong> (multi-video lectures only) — repairs file-to-DOM-position alignment on lectures archived before deterministic capture. First click does a dry-run preview showing every proposed rename in a confirm dialog; nothing is renamed until you OK it. The idempotency guard early-exits when files are already in DOM order.</li>
+        </ul>
 
         <h2>Progress modal status labels</h2>
         <table class="shortcut-table">
@@ -731,6 +767,44 @@
         <p>
           Video files go into your <strong>Media Library</strong>, in a subfolder per course and per lecture. The media library path is set in <strong>Settings → Media Library Path</strong>. The default is shown during first-run setup. You can change the path at any time — existing files stay where they are, and you'd need to move them manually if you change the path.
         </p>
+      </section>
+
+      <!-- LLM Wiki -->
+      <section class="help-section" id="section-wiki">
+        <h1>LLM Wiki</h1>
+        <p class="section-subtitle">A separate Wiki sidebar section extracts four entity kinds from your scraped lectures via OpenRouter — making the cross-cutting authors, techniques, tools, and debates searchable as first-class objects instead of buried-in-transcript text.</p>
+
+        <h2>Entity kinds</h2>
+        <ul>
+          <li><strong>Authors</strong> — writers, instructors, podcasters cited or quoted in the lectures</li>
+          <li><strong>Techniques</strong> — named methods (Storm Chaser Method, Series Architect, Trope Stacking, …)</li>
+          <li><strong>Tools</strong> — software referenced (Claude, ChatGPT, Raptor Write, Notion, …)</li>
+          <li><strong>Debates</strong> — points of disagreement or active deliberation across lectures</li>
+        </ul>
+
+        <h2>Browsing the wiki</h2>
+        <p>
+          Click any of the four count chips in the Wiki sidebar (Authors / Techniques / Tools / Debates). The main pane shows an entity grid; click a card for the detail view with the canonical name, aliases, summary, lecture-sourced notes, and claims (each with supports/contradicts links). Clicking any source link opens that lecture's detail view with the player and chunk-aligned transcript.
+        </p>
+
+        <h2>How content gets into the wiki</h2>
+        <p>
+          Auto-ingest fires <strong>after every course scrape</strong> for any lecture whose <code>scraped_at</code> is newer than its <code>wiki_ingested_at</code>. The orchestrator caps each lecture's transcript at ~12k characters and sends it to the configured OpenRouter model, which returns entities + notes + claims as JSON. Reconciliation merges new entities into existing canonical rows via fuzzy alias matching.
+        </p>
+
+        <h2>Manual rebuilds</h2>
+        <p>
+          The <strong>Rebuild</strong> flow lives in Settings → LLM Wiki. Pick a scope (whole library or a specific course) and click Start. SSE progress streams lecture-by-lecture; Cancel aborts. Re-ingest wipes only the rows tied to the re-extracted lectures, so manual edits elsewhere are preserved.
+        </p>
+
+        <h2>Lint health check</h2>
+        <p>
+          The <strong>✓</strong> button next to the Wiki heading runs a health check: orphan entities (no notes or claims), contradicted claims (supports AND contradicts citations across lectures), stale entities (no updates in 90+ days), and lectures with pending ingest. The lint report is rendered in the main pane with clickable entity links.
+        </p>
+
+        <div class="info-box">
+          <strong>Requires setup:</strong> The Wiki needs an OpenRouter API key and a selected model — same setup as AI Search. Skip the Wiki entirely if you don't want to run an LLM step on your library.
+        </div>
       </section>
 
       <!-- Settings -->

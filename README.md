@@ -5,21 +5,21 @@ Searchable database for Future Fiction Academy content — full-text search acro
 ## Installation (Electron desktop app)
 
 ### macOS (Apple Silicon)
-1. Download `FFA Transcript Database-2.1.0-arm64.dmg`
+1. Download `FFA Transcript Database-2.3.0-arm64.dmg`
 2. Open the `.dmg` and drag the app to `/Applications`
 3. First launch: right-click the app in `/Applications` → **Open** (Gatekeeper warning expected — signed but not yet notarized)
 4. Install `ffmpeg`: `brew install ffmpeg`
 
 ### Windows (x64)
-1. Download `FFA Transcript Database Setup 2.1.0.exe`
+1. Download `FFA Transcript Database Setup 2.3.0.exe`
 2. Double-click — SmartScreen warns "unknown publisher"
 3. Click **More info** → **Run anyway**
 4. Install ffmpeg: `choco install ffmpeg` (or [download from ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH)
 
 ### Linux (x64)
-1. Download `FFA Transcript Database-2.1.0.AppImage`
-2. Make executable: `chmod +x "FFA Transcript Database-2.1.0.AppImage"`
-3. Run: `./FFA\ Transcript\ Database-2.1.0.AppImage`
+1. Download `FFA Transcript Database-2.3.0.AppImage`
+2. Make executable: `chmod +x "FFA Transcript Database-2.3.0.AppImage"`
+3. Run: `./FFA\ Transcript\ Database-2.3.0.AppImage`
 4. Install ffmpeg: `sudo apt install ffmpeg` (Debian/Ubuntu) or distro equivalent
 
 ### Known limitations
@@ -34,10 +34,11 @@ Searchable database for Future Fiction Academy content — full-text search acro
 1. **Launch the app.** On first run, a splash modal asks you to confirm (or change) your **Media Library Path** — the folder where archived videos will be stored. This can grow large; pick a drive with room to spare. Click **Confirm** to continue.
 2. **Watch for the ffmpeg banner.** If ffmpeg isn't on PATH, an orange banner appears at the top with install instructions. Video archiving won't work until ffmpeg is installed.
 3. **Add a Teachable course.** Click the **🔐 Log in to Teachable** button in the sidebar, sign in, then click **+** → select courses → **Scrape Selected**. Progress is shown lecture by lecture.
-4. **Browse the tree.** Courses appear in the left sidebar grouped by tag prefix (CUT / INK / LAN / LED / MID / Other). Expand a group → expand a course → drill down to a section, class, or individual lecture. Non-course sources (Summit transcripts) appear under a **Show transcripts ▾** toggle at the bottom of the tree.
+4. **Browse the tree.** Courses appear in the left sidebar grouped by tag prefix (CUT / INK / LAN / LED / MID / Other). Expand a group → expand a course → drill down to a section, class, or individual lecture. Each course can also expand to show an *"Other Transcripts"* group for legacy imports matched to that course; truly standalone imports (podcasts, YouTube, etc.) live in an *"Unassigned Transcripts"* collapsible section at the bottom of the sidebar (auto-hidden when empty).
 5. **Search.** Type in the search bar — results appear instantly. Toggle **✨ AI** and press `Enter` for a synthesized AI answer with citations.
-6. **Archive videos.** Open a course in the tree, then click **Archive Videos** in the course detail header. A progress modal shows the download for each lecture. All Hotmart-hosted videos per lecture are fetched (not just the first).
-7. **Watch with click-to-seek.** After archiving, open any lecture detail. The inline video player appears above the transcript. Click any `[HH:MM:SS]` timestamp in the transcript to jump the player to that moment and start playback.
+6. **Archive videos.** Open a course (or a specific class / section) in the tree, then click **↓ Archive Videos** in the course detail header. A floating progress panel in the bottom-right shows the download for each lecture — you can keep browsing while it runs. All Hotmart-hosted videos per lecture are fetched (not just the first), and files land in true DOM order on the first run via Puppeteer's `request.frame()` attribution. The button respects the sidebar's scope: clicking it on a class group archives only those lectures; on a section, just that section.
+7. **Watch with click-to-seek.** After archiving, open any lecture detail. The inline video player appears above the transcript. Click any `[HH:MM:SS]` timestamp in the transcript to jump the player to that moment and start playback. On a multi-video lecture, tick **Auto-sequence** to chain through Video 1 → 2 → 3 … as each finishes.
+8. **Explore the Wiki.** A separate **Wiki** tab below Browse extracts Authors / Techniques / Tools / Debates from your scraped lectures via OpenRouter. Auto-ingest runs after every course scrape; the **Rebuild** flow under Settings re-extracts a course (or the whole library) with cancellable SSE progress.
 
 ---
 
@@ -54,18 +55,37 @@ Courses and transcript sources are organized in a collapsible tree, not flat dro
 - **Tag groups** — courses are grouped by prefix: CUT / INK / LAN / LED / MID / Other
 - **Hierarchy** — expand a course to see its sections, class groups, and individual lectures
 - **Click any node** to filter the main view — group → course → section → class → lecture (opens detail)
-- **Show transcripts ▾** toggle reveals non-course sources (Summit transcripts, etc.)
+- **Transcripts nest under their lectures.** Legacy imports (Summit transcripts, podcasts, etc.) that have been FK-linked to a scraped course-lecture render as a *Transcript* child of that lecture and filter by the active video tab. Imports matched to a course but not a specific lecture appear in an *"Other Transcripts"* group inside the course. Truly standalone imports live in an **Unassigned Transcripts** collapsible section at the bottom (auto-hidden when empty).
 - **Resizable** — drag the seam between sidebar and content to widen or narrow it; persists across sessions
 
 ### Inline Video Player
 When a lecture has been archived, an inline player appears above the transcript on the detail view:
 - **Click-to-seek timestamps** — every `[HH:MM:SS]` marker in the transcript is a clickable link that seeks the player and starts playback
-- **Multi-video tabs** — lectures with multiple Hotmart embeds (e.g., FFA Software Support Class Episodes) show "Video 1 / Video 2 / ..." tabs above the player
+- **Multi-video tabs** — lectures with multiple Hotmart embeds (e.g., FFA Software Support Class Episodes) show "Video 1 / Video 2 / ..." tabs above the player. The transcript pane filters to chunks tagged with the active video's `video_index`.
+- **Auto-sequence** — tick the checkbox to chain through videos as each one ends. Visible only on lectures with 2+ videos; setting persists across lectures and reloads.
 - **Playback speed** — choose 0.5×, 0.75×, 1×, 1.25×, 1.5×, 1.75×, or 2×; persists across lectures
 - **Resizable player** — drag the bottom-right corner to make the player taller; height persists
 
 ### Multi-Video Archive
-The **Archive Videos** button on a course detail page downloads all Hotmart-hosted videos for every lecture in the course — not just the first one. Already-archived lectures are skipped on re-runs.
+The **↓ Archive Videos** button downloads every Hotmart-hosted video for the current scope:
+- **Scope follows the sidebar.** Clicking on a class group archives just that class; on a section, just that section; on a bare course node, the whole course. A confirm dialog names the count before kicking off.
+- **Deterministic file order.** Each captured m3u8 is attributed to its source iframe via Puppeteer's `request.frame()` API. Files end up named in true DOM order on the first run (`video.mp4` = first video on the page, `video_2.mp4` = second, etc.) so they line up with the per-video transcript chunks.
+- **Non-modal progress panel.** Floats in the bottom-right; you can keep browsing while a long archive runs in the background. Cancel still aborts. The panel shows `[N/M] Title · Video X/Y · ffmpeg: HH:MM:SS` so you can see lecture progress and per-video progress at once.
+- **Honest partial-success.** A lecture that finishes with N-1 of N videos is marked amber with a "downloaded (3 of 4 videos · 1 failed)" row. The Done summary lists every failed video with the ffmpeg stderr tail.
+- **Truncation detection.** Every download is compared against the manifest's expected duration; mismatches > 5% are recorded as failures even if ffmpeg exited 0.
+- **Shift-click to force.** Holding Shift while clicking the button bypasses the "already archived" shortcut and the per-file `fs.existsSync` skip — useful for replacing a known-bad file without manually deleting it.
+- **Re-scrape transcript** and **Re-order videos** buttons on the lecture detail header repair regressed lectures (e.g., chunks all `video_index=NULL`, or files in capture order from a pre-determinism archive). Re-order does a dry-run preview before mutating anything.
+
+### LLM Wiki
+A separate **Wiki** sidebar section extracts four entity kinds from your scraped lectures via OpenRouter:
+- **Authors** — writers, instructors, podcasters cited
+- **Techniques** — named methods (Storm Chaser Method, Series Architect, etc.)
+- **Tools** — software referenced (Claude, ChatGPT, Raptor Write, …)
+- **Debates** — points of disagreement or active deliberation
+
+Each entity has a canonical name, aliases, summary, and lecture-sourced notes + claims. Click any entity → detail view with clickable source links back to the lecture. The **Rebuild** flow in Settings re-extracts a course (or the whole library) with cancellable SSE progress. Auto-ingest fires after every course scrape, so new content gets wiki-indexed without manual rebuilds.
+
+Requires an OpenRouter API key and a selected model (same setup as AI Search). Skip the Wiki section entirely if you don't want the LLM step.
 
 ### Teachable Course Scraping
 Log in to Teachable once via the sidebar, then click **+** to pick courses to scrape. Each lecture's text is extracted and indexed. Progress is shown lecture by lecture. A **Force Refresh** checkbox re-fetches transcript text for known lectures even if they've already been scraped.

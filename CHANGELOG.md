@@ -2,6 +2,44 @@
 
 All notable changes to TranscriptDB. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.3.0] — 2026-05-14 (later)
+
+### Added
+
+- **Auto-sequence checkbox on the video player** — when a multi-video lecture's current video ends, the next tab is selected automatically and playback continues. Toggle visible only on lectures with 2+ videos; setting persists in localStorage (`tdb-player-auto-sequence`).
+- **Archive Videos respects the sidebar scope.** Clicking the button on a class group archives only that class's lectures; on a section, just the section. A confirm dialog names the count: *"Archive 3 lectures from class 231?"*. Bare-course-node still archives the whole course.
+- **Shift-click Archive Videos = force re-download.** Bypasses both the "already archived" outer shortcut and the per-file `fs.existsSync` skip. Useful for replacing a known-bad file without manually deleting it on disk.
+- **Re-scrape transcript button** on the lecture detail header — re-runs the per-video chunk extraction on a single lecture. Replaces the lecture's `course_chunks` rows in a transaction.
+- **Re-order Videos button** on multi-video lecture details — repairs file-to-DOM-position alignment on lectures archived before deterministic capture. Two-step UX: first click does a dry-run and shows the rename plan in a confirm dialog; nothing is renamed until you approve. Idempotency guard early-exits when files are already in DOM order. Atomic rename via temp slots, plus a restore-or-orphan-warning step so no file can be clobbered.
+- **archive_failures table** — one row per unresolved (lecture_id, video_index) failure with the ffmpeg stderr tail. Rows auto-clear on the next successful download for the same slot. `GET /api/archive-failures` (optionally `?course_id=X`) returns the joined rows for any future UI surfacing.
+- **Truncation detection** — every archive run probes the m3u8 manifest upfront to learn the expected duration, then compares it against the actual downloaded duration. Mismatches > 5% are persisted to `archive_failures` so a partial download doesn't silently look complete. New column `course_lectures.video_expected_duration_sec`.
+- **Archive Videos panel is non-modal.** Floats in the bottom-right corner without a backdrop, so you can keep browsing other lectures while a long multi-video archive runs in the background. Cancel still aborts; closing the panel (✕) only hides it.
+- **Failure list in the Done summary.** Each per-video failure during a run is rendered with the lecture title, video index, filename, and a 240-char tail of the ffmpeg stderr — plus a hint that re-running Archive Videos retries just the missing slots.
+- **Type filter wired up for course lectures.** Lessons / Pre Q&A / Post Q&A / Work Sessions chips now filter the course-detail grid via the FK-linked transcripts' `transcript_type`. (Empty results on courses with no linked transcripts is semantically correct.)
+- **New endpoints:**
+  - `POST /api/courses/lectures/:id/rescrape-transcripts`
+  - `POST /api/courses/lectures/:id/reorder-videos` (supports `{ dryRun: true }`)
+  - `GET /api/archive-failures` (optionally `?course_id=X`)
+
+### Changed
+
+- **Multi-video archive is now deterministic.** Each captured `.m3u8` is attributed to the iframe that fired it via Puppeteer's `request.frame()` API (walks the parent-frame chain until it finds the `/embed/<id>` iframe page). Files are written in true DOM order on the first run regardless of which iframe's player finishes loading first; the previous "capture order = DOM order" assumption that misnamed files on some lectures is gone.
+- **Filenames use DOM index, not loop position.** A 3-of-5 archive writes `video.mp4 / video_3.mp4 / video_5.mp4` with gaps, not three sequential names — keeps tab labels honest about which DOM slot each file is.
+- **Outer "already archived" skip** now compares `video_local_paths.length` to `video_embed_ids.length` (set by the scraper to the iframe count). A partial archive no longer wrongly short-circuits as complete; the next click on Archive Videos retries the missing slots.
+- **Archive progress UI** surfaces a `Video N/M` counter alongside ffmpeg's `time=` updates and a partial-success state ("downloaded (3 of 4 videos · 1 failed)") with an amber row colour. Counts are threaded through the SSE event stream so the modal's headline stays honest about which video is being processed.
+- **Course title display** strips a leading "<Month> <YYYY> " prefix from sidebar labels (e.g. "August 2025 FFA Publishing Summit" → "FFA Publishing Summit"). DB row keeps the full title so scraper and search are unaffected.
+- **Wiki source links** now route through the course-lecture endpoint (`clec-<id>`) instead of mis-routing to the legacy `/api/transcripts/<id>` table — the click-through actually works now.
+
+### Fixed
+
+- **Scraper preserves per-video transcripts.** When a lecture page has multiple `.txt` download attachments after a video (a per-Part transcript plus a combined-all-Parts transcript at the bottom), the *first* one wins. Previously the last one overwrote the first, so Video N's chunks always ended up holding the combined block. Applies to both `scrapeCourse` and the new `rescrapeLectureTranscripts`.
+- **Truncated downloads no longer look successful.** ffmpeg exiting code 0 doesn't mean the file matches the manifest — short downloads are now caught by the duration probe and recorded as failures.
+- **Reorder won't ship a partial-fail state.** If any manifest probe fails (Hotmart auth tokens occasionally expire between master and variant fetches), the operation refuses entirely with a "try again" message instead of renaming some files and leaving orphan `.reorder-tmp-N` files.
+
+### Removed
+
+- `/tmp/`-pathed log redirects for the dev server. `dev:electron` background output now lands in `./logs/electron.log` (gitignored).
+
 ## [2.2.0] — 2026-05-14
 
 ### Added
