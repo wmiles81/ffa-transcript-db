@@ -2736,17 +2736,26 @@ async function startArchive(courseId, scope = {}) {
                         break;
                     }
                     case 'phase': {
-                        // Workflow phase indicator: Archive → Verify → Rescrape.
-                        // We render it on the status line so the user always
-                        // sees what the server is doing right now.
+                        // Workflow phase indicator. Five phases when a retry
+                        // is needed, three when the first archive was clean.
                         const phaseLabels = {
-                            archive: 'Phase 1/3 — Downloading videos',
-                            verify: 'Phase 2/3 — Verifying completeness',
-                            rescrape: 'Phase 3/3 — Re-scraping transcripts',
+                            archive: 'Downloading videos',
+                            verify: 'Verifying completeness',
+                            retry: 'Retrying failed videos',
+                            'verify-retry': 'Re-verifying after retry',
+                            rescrape: 'Re-scraping transcripts',
                         };
-                        statusLine.textContent = phaseLabels[event.phase] || event.label || event.phase;
-                        if (event.phase === 'verify' || event.phase === 'rescrape') {
-                            // Archive done — reset progress bar for the new phase.
+                        statusLine.textContent = `Phase: ${phaseLabels[event.phase] || event.label || event.phase}`;
+                        if (event.phase !== 'archive' && event.phase !== 'retry') {
+                            // Verify/Rescrape don't have per-lecture work to show
+                            // on the bar; reset it so it doesn't look stale.
+                            progressFill.style.width = '0%';
+                            currentLecture.textContent = '';
+                        } else if (event.phase === 'retry') {
+                            // Wipe the per-lecture row tracker so retry events
+                            // don't append to the original archive's <li>s.
+                            lectureRows.clear();
+                            lectureList.innerHTML = '';
                             progressFill.style.width = '0%';
                             currentLecture.textContent = '';
                         }
@@ -2755,11 +2764,12 @@ async function startArchive(courseId, scope = {}) {
                     case 'verify-summary': {
                         // Render a compact one-line summary; full numbers
                         // land in the final Done block.
+                        const prefix = event.attempt === 2 ? 'After retry: ' : '';
                         const parts = [`${event.scopeLectureCount} lectures in scope`];
                         if (event.failureCount > 0) parts.push(`${event.failureCount} per-video failures across ${event.failureLectureCount} lecture(s)`);
                         if (event.incompleteSlotCount > 0) parts.push(`${event.incompleteSlotCount} DOM slot(s) still empty`);
                         if (event.failureCount === 0 && event.incompleteSlotCount === 0) parts.push('all archived cleanly');
-                        currentLecture.textContent = parts.join(' · ');
+                        currentLecture.textContent = prefix + parts.join(' · ');
                         break;
                     }
                     case 'rescrape-progress': {
@@ -2779,22 +2789,30 @@ async function startArchive(courseId, scope = {}) {
                     case 'done': {
                         // Final event of the whole workflow. The archive's
                         // 'summary' event already rendered the videos block;
-                        // append rescrape stats if present.
+                        // append retry + rescrape blocks if those phases ran.
                         progressFill.style.width = '100%';
-                        if (event.rescrape) {
+                        if (event.retry || event.rescrape) {
                             summary.classList.remove('hidden');
-                            const existing = summary.innerHTML;
-                            const rescrapeBlock = `
-                                <h4 class="archive-failures-title">Re-scraped transcripts</h4>
-                                <ul>
-                                    <li>Processed: ${event.rescrape.processed}</li>
-                                    <li>Failed: ${event.rescrape.failed}</li>
-                                    <li>Of total: ${event.rescrape.total}</li>
-                                </ul>`;
-                            // If the archive 'summary' event never fired (e.g. early error),
-                            // make sure the summary block at least exists.
-                            if (!existing) summary.innerHTML = '<h3>Summary</h3>';
-                            summary.innerHTML += rescrapeBlock;
+                            if (!summary.innerHTML) summary.innerHTML = '<h3>Summary</h3>';
+                            if (event.retry) {
+                                summary.innerHTML += `
+                                    <h4 class="archive-failures-title">Retry pass</h4>
+                                    <ul>
+                                        <li>Downloaded: ${event.retry.downloaded}</li>
+                                        <li>Already archived: ${event.retry.alreadyArchived}</li>
+                                        <li>Failed: ${event.retry.failed}</li>
+                                        <li>Elapsed: ${Math.round((event.retry.elapsedMs || 0) / 1000)}s</li>
+                                    </ul>`;
+                            }
+                            if (event.rescrape) {
+                                summary.innerHTML += `
+                                    <h4 class="archive-failures-title">Re-scraped transcripts</h4>
+                                    <ul>
+                                        <li>Processed: ${event.rescrape.processed}</li>
+                                        <li>Failed: ${event.rescrape.failed}</li>
+                                        <li>Of total: ${event.rescrape.total}</li>
+                                    </ul>`;
+                            }
                             statusLine.textContent = event.aborted ? 'Cancelled.' : 'Done.';
                             currentLecture.textContent = '';
                         }

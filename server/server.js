@@ -1043,53 +1043,96 @@ app.post('/api/courses/:id/archive-videos', async (req, res) => {
             return;
         }
 
-        // ---------- Phase 2: Verify ----------
-        // Query the scope to surface what still looks incomplete. Same scope
-        // filters as the archive (section_id, class_number, exclude removed
-        // and "Start" nav artifacts). No mutations — purely informational.
-        res.write(`data: ${JSON.stringify({ type: 'phase', phase: 'verify', label: 'Verifying completeness' })}\n\n`);
+        // Helper: compute the verify state for the current scope.
+        // Counts archive_failures rows and DOM slots that have no on-disk
+        // file (recorded < embed_ids).
         const db = getDb();
         const scopeWhere = ['cl.course_id = ?', "(cl.removed_at IS NULL OR cl.removed_at = '')", "cl.title != 'Start'", "cl.title NOT LIKE '%Check Out the FFA Free Community Classes%'"];
         const scopeParams = [courseId];
         if (sectionId != null) { scopeWhere.push('cl.section_id = ?'); scopeParams.push(sectionId); }
         if (classNumber != null && classNumber !== '') { scopeWhere.push('cl.class_number = ?'); scopeParams.push(String(classNumber)); }
-        const scopeLectures = db.prepare(
-            `SELECT cl.id, cl.title, cl.video_local_paths, cl.video_embed_ids
-             FROM course_lectures cl WHERE ${scopeWhere.join(' AND ')} ORDER BY cl.section_id, cl.position`
-        ).all(...scopeParams);
-        const failureRows = scopeLectures.length === 0 ? [] : db.prepare(
-            `SELECT lecture_id, video_index, error_message FROM archive_failures
-             WHERE lecture_id IN (${scopeLectures.map(() => '?').join(',')})`
-        ).all(...scopeLectures.map(l => l.id));
-        const failureLectureIds = new Set(failureRows.map(r => r.lecture_id));
-        let incompleteSlots = 0;
-        for (const l of scopeLectures) {
-            let recordedCount = 0;
-            let embedCount = 0;
-            try {
-                const paths = JSON.parse(l.video_local_paths || '[]');
-                if (Array.isArray(paths)) recordedCount = paths.length;
-            } catch { /* ignore */ }
-            try {
-                const ids = JSON.parse(l.video_embed_ids || '[]');
-                if (Array.isArray(ids)) embedCount = ids.length;
-            } catch { /* ignore */ }
-            if (embedCount > recordedCount) incompleteSlots += (embedCount - recordedCount);
-        }
-        res.write(`data: ${JSON.stringify({
-            type: 'verify-summary',
-            scopeLectureCount: scopeLectures.length,
-            failureCount: failureRows.length,
-            failureLectureCount: failureLectureIds.size,
-            incompleteSlotCount: incompleteSlots,
-        })}\n\n`);
+        const computeVerify = () => {
+            const scopeLectures = db.prepare(
+                `SELECT cl.id, cl.title, cl.video_local_paths, cl.video_embed_ids
+                 FROM course_lectures cl WHERE ${scopeWhere.join(' AND ')} ORDER BY cl.section_id, cl.position`
+            ).all(...scopeParams);
+            const failureRows = scopeLectures.length === 0 ? [] : db.prepare(
+                `SELECT lecture_id, video_index, error_message FROM archive_failures
+                 WHERE lecture_id IN (${scopeLectures.map(() => '?').join(',')})`
+            ).all(...scopeLectures.map(l => l.id));
+            const failureLectureIds = new Set(failureRows.map(r => r.lecture_id));
+            let incompleteSlots = 0;
+            for (const l of scopeLectures) {
+                let recordedCount = 0;
+                let embedCount = 0;
+                try {
+                    const paths = JSON.parse(l.video_local_paths || '[]');
+                    if (Array.isArray(paths)) recordedCount = paths.length;
+                } catch { /* ignore */ }
+                try {
+                    const ids = JSON.parse(l.video_embed_ids || '[]');
+                    if (Array.isArray(ids)) embedCount = ids.length;
+                } catch { /* ignore */ }
+                if (embedCount > recordedCount) incompleteSlots += (embedCount - recordedCount);
+            }
+            return {
+                scopeLectures,
+                scopeLectureCount: scopeLectures.length,
+                failureCount: failureRows.length,
+                failureLectureCount: failureLectureIds.size,
+                incompleteSlotCount: incompleteSlots,
+            };
+        };
+
+        // ---------- Phase 2: Verify ----------
+        // Same scope filters as the archive. No mutations.
+        res.write(`data: ${JSON.stringify({ type: 'phase', phase: 'verify', label: 'Verifying completeness' })}\n\n`);
+        let verify = computeVerify();
+        const { scopeLectures } = verify;
+        res.write(`data: ${JSON.stringify({ type: 'verify-summary', ...verify, attempt: 1 })}\n\n`);
 
         if (controller.signal.aborted) {
             res.write(`data: ${JSON.stringify({ type: 'done', archive: archiveResult.summary, aborted: true })}\n\n`);
             return;
         }
 
-        // ---------- Phase 3: Re-scrape transcripts ----------
+        // ---------- Phase 3: Retry failures ----------
+        // If verify found unfinished work, re-run the archive over the same
+        // scope. The embed_ids-aware outer skip lets fully-archived lectures
+        // short-circuit without a Puppeteer launch, so only incomplete
+        // lectures do real work. The per-file fs.existsSync skip preserves
+        // the videos that succeeded the first time; only the missing slots
+        // get a fresh manifest capture + ffmpeg attempt. Single pass — if
+        // failures persist after one retry, the final verify reports them
+        // and the user can investigate the stderr in the Done summary.
+        let retryResult = null;
+        if (verify.failureCount > 0 || verify.incompleteSlotCount > 0) {
+            res.write(`data: ${JSON.stringify({ type: 'phase', phase: 'retry', label: 'Retrying failed videos' })}\n\n`);
+            retryResult = await archiveCourseVideos(courseId, {
+                force: false,
+                sectionId,
+                classNumber,
+                signal: controller.signal,
+                onProgress: (event) => {
+                    res.write(`data: ${JSON.stringify(event)}\n\n`);
+                },
+            });
+            if (retryResult.interrupted || controller.signal.aborted) {
+                res.write(`data: ${JSON.stringify({ type: 'done', archive: archiveResult.summary, retry: retryResult?.summary, aborted: true })}\n\n`);
+                return;
+            }
+            // Re-verify so the user sees the post-retry state, not the pre-retry numbers.
+            res.write(`data: ${JSON.stringify({ type: 'phase', phase: 'verify-retry', label: 'Re-verifying' })}\n\n`);
+            verify = computeVerify();
+            res.write(`data: ${JSON.stringify({ type: 'verify-summary', ...verify, attempt: 2 })}\n\n`);
+        }
+
+        if (controller.signal.aborted) {
+            res.write(`data: ${JSON.stringify({ type: 'done', archive: archiveResult.summary, retry: retryResult?.summary, aborted: true })}\n\n`);
+            return;
+        }
+
+        // ---------- Phase 4: Re-scrape transcripts ----------
         // Per-lecture re-extract of .lecture-attachment DOM walk so chunks
         // get tagged with video_index and video_embed_ids is refreshed.
         // Runs for every lecture in scope regardless of archive success —
@@ -1124,6 +1167,7 @@ app.post('/api/courses/:id/archive-videos', async (req, res) => {
         res.write(`data: ${JSON.stringify({
             type: 'done',
             archive: archiveResult.summary,
+            retry: retryResult ? retryResult.summary : null,
             rescrape: { processed: rescraped, failed: rescrapeFailed, total: scopeLectures.length },
             aborted: controller.signal.aborted,
         })}\n\n`);
