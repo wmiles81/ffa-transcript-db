@@ -364,6 +364,30 @@
     </div>
   </div>
 
+  <!-- Wiki Ingest floating panel. Same .archive-panel positioning so it
+       floats in the bottom-right without blocking other UI — user can keep
+       browsing while the LLM works through pending lectures. -->
+  <div id="wiki-ingest-panel" class="archive-panel hidden" role="region" aria-labelledby="wiki-ingest-title">
+    <div class="modal archive-modal-content">
+      <div class="modal-header">
+        <h2 id="wiki-ingest-title">Wiki Ingest</h2>
+        <button id="wiki-ingest-close" class="modal-close" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="wiki-ingest-status" class="archive-status-line">Starting…</div>
+        <div id="wiki-ingest-current" class="archive-current-lecture"></div>
+        <div class="archive-progress-bar">
+          <div id="wiki-ingest-fill" class="archive-progress-fill"></div>
+        </div>
+        <div id="wiki-ingest-summary" class="archive-summary hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="wiki-ingest-cancel" class="delete-modal-confirm">Cancel</button>
+        <button id="wiki-ingest-done" class="add-course-submit hidden">Done</button>
+      </div>
+    </div>
+  </div>
+
   <!-- First-run Media Library splash -->
   <div id="splash-modal" class="splash-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="splash-title">
     <div class="splash-backdrop"></div>

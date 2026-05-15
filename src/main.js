@@ -252,6 +252,7 @@ async function init() {
     setupCourseListeners();
     setupWikiListeners();
     setupWikiSettingsListeners();
+    setupWikiIngestPanel();
     await initTree();
     attachMediaLibrarySettingsHandlers();
     attachSplashHandlers();
@@ -3196,7 +3197,6 @@ function showWikiLintReport(data) {
                 Pending ingest: <strong>${pending}</strong> lecture(s) have transcripts newer than their wiki state.
                 ${ingestBtn}
             </div>
-            <div class="wiki-ingest-progress hidden"></div>
             ${orphans}
             ${contradicted}
             ${stale}
@@ -3216,27 +3216,56 @@ function showWikiLintReport(data) {
 
 // Process every lecture whose scraped_at is newer than its wiki_ingested_at.
 // Non-destructive: notes/claims are merged into existing entities via the
-// reconciliation logic that auto-ingest already uses. SSE-streamed for
-// live progress; cancellable by closing the connection (page navigation).
+// reconciliation logic that auto-ingest already uses. SSE-streamed; lives
+// in a floating bottom-right panel (.archive-panel layout) so the user can
+// keep browsing while it runs. Cancel closes the fetch which triggers
+// res.on('close') on the server, breaking the loop between lectures.
 async function runWikiIngestPending() {
-    const btn = el.wikiContainer.querySelector('.wiki-ingest-pending-btn');
-    const progressEl = el.wikiContainer.querySelector('.wiki-ingest-progress');
-    if (btn) { btn.disabled = true; btn.textContent = 'Ingesting…'; }
-    if (progressEl) progressEl.classList.remove('hidden');
+    const panel = document.getElementById('wiki-ingest-panel');
+    const statusEl = document.getElementById('wiki-ingest-status');
+    const currentEl = document.getElementById('wiki-ingest-current');
+    const fillEl = document.getElementById('wiki-ingest-fill');
+    const summaryEl = document.getElementById('wiki-ingest-summary');
+    const cancelBtn = document.getElementById('wiki-ingest-cancel');
+    const doneBtn = document.getElementById('wiki-ingest-done');
+    if (!panel) return;
+    if (state.wikiIngestAbort) {
+        // Already running — surface the panel and bail.
+        panel.classList.remove('hidden');
+        return;
+    }
 
+    panel.classList.remove('hidden');
+    statusEl.textContent = 'Starting…';
+    currentEl.textContent = '';
+    fillEl.style.width = '0%';
+    summaryEl.classList.add('hidden');
+    summaryEl.innerHTML = '';
+    cancelBtn.classList.remove('hidden');
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = 'Cancel';
+    doneBtn.classList.add('hidden');
+
+    // AbortController lets the Cancel button tear the fetch down — that
+    // closes the response stream, which the server detects via res.on('close')
+    // and breaks its iteration loop.
+    const controller = new AbortController();
+    state.wikiIngestAbort = controller;
+
+    let total = 0;
+    let processed = 0;
+    let failed = 0;
     try {
         const res = await fetch('/api/wiki/ingest-pending', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: '{}',
+            signal: controller.signal,
         });
         if (!res.ok || !res.body) throw new Error(`server returned ${res.status}`);
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
-        let processed = 0;
-        let failed = 0;
-        let total = 0;
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
@@ -3249,27 +3278,67 @@ async function runWikiIngestPending() {
                 try { event = JSON.parse(msg.slice('data: '.length)); } catch { continue; }
                 if (event.type === 'start') {
                     total = event.total;
-                    if (progressEl) progressEl.textContent = `Starting… ${total} lecture${total === 1 ? '' : 's'} to ingest.`;
+                    statusEl.textContent = total === 0
+                        ? 'Nothing pending.'
+                        : `Ingesting ${total} lecture${total === 1 ? '' : 's'}…`;
                 } else if (event.type === 'progress') {
-                    if (progressEl) progressEl.textContent = `[${event.current}/${event.total}] ${event.lecture}`;
+                    statusEl.textContent = `[${event.current}/${event.total}] ingesting…`;
+                    currentEl.textContent = event.lecture;
+                    fillEl.style.width = `${((event.current - 1) / Math.max(event.total, 1)) * 100}%`;
                 } else if (event.type === 'error' && event.lecture) {
                     failed += 1;
                     console.warn(`[wiki ingest] ${event.lecture}: ${event.error}`);
                 } else if (event.type === 'done') {
                     processed = event.processed;
                     failed = event.failed;
-                    if (progressEl) progressEl.textContent = `Done. ${processed} ingested, ${failed} failed (of ${event.total}).`;
+                    fillEl.style.width = '100%';
+                    summaryEl.classList.remove('hidden');
+                    const cancelledNote = event.aborted ? '<li><em>Cancelled mid-run</em></li>' : '';
+                    summaryEl.innerHTML = `<h3>Summary</h3><ul><li>Ingested: ${processed}</li><li>Failed: ${failed}</li><li>Of total: ${event.total}</li>${cancelledNote}</ul>`;
+                    statusEl.textContent = event.aborted ? 'Cancelled.' : 'Done.';
+                    currentEl.textContent = '';
+                    cancelBtn.classList.add('hidden');
+                    doneBtn.classList.remove('hidden');
                 }
             }
         }
-        // Refresh the lint view so the pending count and orphan/contradiction
-        // sections reflect the new state.
+        // Refresh wiki sidebar counts + lint view so the pending count drops.
         loadWikiKindCounts();
-        setTimeout(() => runWikiLint(), 600);
+        if (state.activeView === 'wiki' && el.wikiContainer && el.wikiContainer.querySelector('.wiki-lint')) {
+            setTimeout(() => runWikiLint(), 600);
+        }
     } catch (err) {
-        if (progressEl) progressEl.textContent = `Failed: ${err.message}`;
-        if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+        if (err.name === 'AbortError') {
+            statusEl.textContent = 'Cancelled.';
+            currentEl.textContent = '';
+            cancelBtn.classList.add('hidden');
+            doneBtn.classList.remove('hidden');
+        } else {
+            statusEl.textContent = `Failed: ${err.message}`;
+            cancelBtn.classList.add('hidden');
+            doneBtn.classList.remove('hidden');
+        }
+    } finally {
+        state.wikiIngestAbort = null;
     }
+}
+
+// Wire panel buttons once at startup.
+function setupWikiIngestPanel() {
+    const panel = document.getElementById('wiki-ingest-panel');
+    if (!panel) return;
+    const cancelBtn = document.getElementById('wiki-ingest-cancel');
+    const doneBtn = document.getElementById('wiki-ingest-done');
+    const closeBtn = document.getElementById('wiki-ingest-close');
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+            cancelBtn.disabled = true;
+            cancelBtn.textContent = 'Cancelling…';
+            if (state.wikiIngestAbort) state.wikiIngestAbort.abort();
+        });
+    }
+    if (doneBtn) doneBtn.addEventListener('click', () => panel.classList.add('hidden'));
+    if (closeBtn) closeBtn.addEventListener('click', () => panel.classList.add('hidden'));
 }
 
 function setupWikiListeners() {

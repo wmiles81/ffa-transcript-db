@@ -823,6 +823,13 @@ app.post('/api/wiki/ingest-pending', async (req, res) => {
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
     });
+    // Cooperative cancellation: when the renderer closes the fetch
+    // (Cancel button or window close) we flip aborted and break the
+    // loop between lectures so the user isn't billed for further LLM
+    // calls. The current in-flight ingestLecture call still completes
+    // (its own callLLM has the 90s timeout for hangs).
+    let aborted = false;
+    res.on('close', () => { aborted = true; });
     try {
         const db = getDb();
         // Resolve the pending set upfront so we can emit progress with a
@@ -841,6 +848,7 @@ app.post('/api/wiki/ingest-pending', async (req, res) => {
         let processed = 0;
         let failed = 0;
         for (let i = 0; i < pending.length; i++) {
+            if (aborted) break;
             const l = pending[i];
             res.write(`data: ${JSON.stringify({ type: 'progress', current: i + 1, total, lecture: l.title })}\n\n`);
             try {
@@ -851,7 +859,7 @@ app.post('/api/wiki/ingest-pending', async (req, res) => {
                 res.write(`data: ${JSON.stringify({ type: 'error', lecture: l.title, error: err.message })}\n\n`);
             }
         }
-        res.write(`data: ${JSON.stringify({ type: 'done', processed, failed, total })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'done', processed, failed, total, aborted })}\n\n`);
     } catch (err) {
         res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
     } finally {
