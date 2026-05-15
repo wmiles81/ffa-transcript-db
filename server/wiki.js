@@ -55,25 +55,39 @@ function logAction(action, { entityId = null, lectureId = null, summary = '' } =
 // LLM call — OpenRouter chat completions, JSON response expected.
 // Returns parsed JSON or throws.
 // -----------------------------------------------------------------------------
-async function callLLM({ systemPrompt, userMessage, model, apiKey, maxTokens = 2048 }) {
-  const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'http://localhost:5173',
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-      response_format: { type: 'json_object' },
-      max_tokens: maxTokens,
-      temperature: 0.2,
-    }),
-  });
+async function callLLM({ systemPrompt, userMessage, model, apiKey, maxTokens = 2048, timeoutMs = 90_000 }) {
+  // 90s hard timeout — without this a hung OpenRouter request blocks the
+  // entire ingest loop indefinitely. AbortController fires both the fetch
+  // abort and a meaningful error message.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'http://localhost:5173',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage },
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: maxTokens,
+        temperature: 0.2,
+      }),
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error(`OpenRouter timeout after ${timeoutMs / 1000}s`);
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
     throw new Error(`OpenRouter ${response.status}: ${errText.slice(0, 200)}`);
@@ -319,17 +333,20 @@ export async function ingestLecture(lectureId, options = {}) {
   if (!settings.selectedModel) throw new Error('No OpenRouter model selected');
 
   let extracted;
+  const llmStartedAt = Date.now();
   try {
     // Cap transcript at ~12k chars to stay safely under most model context limits.
     const capped = transcript.length > 12000
       ? transcript.slice(0, 12000) + '\n\n[transcript truncated for context window]'
       : transcript;
+    console.warn(`[wiki] ingest lecture ${lectureId} "${lecture.title}" — calling LLM (${settings.selectedModel}, ${capped.length} chars)`);
     extracted = await callLLM({
       systemPrompt: EXTRACTION_SYSTEM,
       userMessage: EXTRACTION_USER_TEMPLATE(lecture.title, lecture.course_title || '(unknown course)', capped),
       model: settings.selectedModel,
       apiKey: settings.apiKey,
     });
+    console.warn(`[wiki] ingest lecture ${lectureId} "${lecture.title}" — LLM returned in ${Math.round((Date.now() - llmStartedAt) / 100) / 10}s`);
   } catch (err) {
     logAction('ingest_failed', {
       lectureId,
