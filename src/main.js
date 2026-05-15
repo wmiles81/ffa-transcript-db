@@ -3187,9 +3187,16 @@ function showWikiLintReport(data) {
     const stale = section('Entities not seen in 180+ days', data.staleEntities, e =>
         `<li><a href="#" class="wiki-source-link" data-entity-id="${e.id}">${escapeHtml(e.canonical_name)}</a> <span class="wiki-lint-kind">(updated ${escapeHtml((e.updated_at || '').slice(0, 10))})</span></li>`
     );
+    const ingestBtn = pending > 0
+        ? `<button class="wiki-ingest-pending-btn" type="button">Ingest ${pending} pending lecture${pending === 1 ? '' : 's'}</button>`
+        : '';
     el.wikiContainer.innerHTML = `
         <div class="wiki-lint">
-            <div class="wiki-lint-summary">Pending ingest: <strong>${pending}</strong> lecture(s) have transcripts newer than their wiki state.</div>
+            <div class="wiki-lint-summary">
+                Pending ingest: <strong>${pending}</strong> lecture(s) have transcripts newer than their wiki state.
+                ${ingestBtn}
+            </div>
+            <div class="wiki-ingest-progress hidden"></div>
             ${orphans}
             ${contradicted}
             ${stale}
@@ -3201,6 +3208,68 @@ function showWikiLintReport(data) {
             if (id) openWikiEntity(id);
         });
     });
+    const ingestButton = el.wikiContainer.querySelector('.wiki-ingest-pending-btn');
+    if (ingestButton) {
+        ingestButton.addEventListener('click', () => runWikiIngestPending());
+    }
+}
+
+// Process every lecture whose scraped_at is newer than its wiki_ingested_at.
+// Non-destructive: notes/claims are merged into existing entities via the
+// reconciliation logic that auto-ingest already uses. SSE-streamed for
+// live progress; cancellable by closing the connection (page navigation).
+async function runWikiIngestPending() {
+    const btn = el.wikiContainer.querySelector('.wiki-ingest-pending-btn');
+    const progressEl = el.wikiContainer.querySelector('.wiki-ingest-progress');
+    if (btn) { btn.disabled = true; btn.textContent = 'Ingesting…'; }
+    if (progressEl) progressEl.classList.remove('hidden');
+
+    try {
+        const res = await fetch('/api/wiki/ingest-pending', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        if (!res.ok || !res.body) throw new Error(`server returned ${res.status}`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let processed = 0;
+        let failed = 0;
+        let total = 0;
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const messages = buffer.split('\n\n');
+            buffer = messages.pop();
+            for (const msg of messages) {
+                if (!msg.startsWith('data: ')) continue;
+                let event;
+                try { event = JSON.parse(msg.slice('data: '.length)); } catch { continue; }
+                if (event.type === 'start') {
+                    total = event.total;
+                    if (progressEl) progressEl.textContent = `Starting… ${total} lecture${total === 1 ? '' : 's'} to ingest.`;
+                } else if (event.type === 'progress') {
+                    if (progressEl) progressEl.textContent = `[${event.current}/${event.total}] ${event.lecture}`;
+                } else if (event.type === 'error' && event.lecture) {
+                    failed += 1;
+                    console.warn(`[wiki ingest] ${event.lecture}: ${event.error}`);
+                } else if (event.type === 'done') {
+                    processed = event.processed;
+                    failed = event.failed;
+                    if (progressEl) progressEl.textContent = `Done. ${processed} ingested, ${failed} failed (of ${event.total}).`;
+                }
+            }
+        }
+        // Refresh the lint view so the pending count and orphan/contradiction
+        // sections reflect the new state.
+        loadWikiKindCounts();
+        setTimeout(() => runWikiLint(), 600);
+    } catch (err) {
+        if (progressEl) progressEl.textContent = `Failed: ${err.message}`;
+        if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+    }
 }
 
 function setupWikiListeners() {

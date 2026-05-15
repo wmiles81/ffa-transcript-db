@@ -2856,9 +2856,38 @@ body.splash-active {
   padding: 10px 14px;
   background: var(--bg-elevated);
   border-radius: 6px;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
+.wiki-ingest-pending-btn {
+  padding: 6px 12px;
+  background: var(--accent, #f0a830);
+  color: var(--bg-primary, #1a1a1a);
+  border: none;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.wiki-ingest-pending-btn:hover { opacity: 0.88; }
+.wiki-ingest-pending-btn:disabled { opacity: 0.55; cursor: default; }
+.wiki-ingest-progress {
+  padding: 8px 14px;
+  margin-bottom: 16px;
+  background: rgba(240, 168, 48, 0.08);
+  border-left: 3px solid var(--accent, #f0a830);
+  border-radius: 0 4px 4px 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.wiki-ingest-progress.hidden { display: none; }
 .wiki-lint-section {
   margin-bottom: 24px;
 }

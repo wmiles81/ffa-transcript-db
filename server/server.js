@@ -810,6 +810,55 @@ app.post('/api/wiki/rebuild', async (req, res) => {
     }
 });
 
+// POST /api/wiki/ingest-pending — SSE stream that ingests only the lectures
+// whose scraped_at is newer than their wiki_ingested_at (or null). Non-
+// destructive: existing wiki rows untouched, new content merges via the
+// same reconciliation auto-ingest uses. This is what the lint's "N pending
+// ingest" count refers to — runs the delta on demand instead of triggering
+// a full wipe-and-rebuild.
+app.post('/api/wiki/ingest-pending', async (req, res) => {
+    const { courseId } = req.body || {};
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+    });
+    try {
+        const db = getDb();
+        // Resolve the pending set upfront so we can emit progress with a
+        // denominator. ingestPending re-queries internally; that's fine.
+        let query = `
+            SELECT cl.id, cl.title FROM course_lectures cl
+            WHERE cl.removed_at IS NULL
+              AND (cl.wiki_ingested_at IS NULL OR cl.wiki_ingested_at < cl.scraped_at)
+        `;
+        const params = [];
+        if (courseId) { query += ' AND cl.course_id = ?'; params.push(Number(courseId)); }
+        query += ' ORDER BY cl.id';
+        const pending = db.prepare(query).all(...params);
+        const total = pending.length;
+        res.write(`data: ${JSON.stringify({ type: 'start', total })}\n\n`);
+        let processed = 0;
+        let failed = 0;
+        for (let i = 0; i < pending.length; i++) {
+            const l = pending[i];
+            res.write(`data: ${JSON.stringify({ type: 'progress', current: i + 1, total, lecture: l.title })}\n\n`);
+            try {
+                await ingestLecture(l.id, { force: false });
+                processed += 1;
+            } catch (err) {
+                failed += 1;
+                res.write(`data: ${JSON.stringify({ type: 'error', lecture: l.title, error: err.message })}\n\n`);
+            }
+        }
+        res.write(`data: ${JSON.stringify({ type: 'done', processed, failed, total })}\n\n`);
+    } catch (err) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
+    } finally {
+        res.end();
+    }
+});
+
 // POST /api/wiki/lint — run lint and return findings
 app.post('/api/wiki/lint', (req, res) => {
     try {
