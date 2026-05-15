@@ -2735,18 +2735,75 @@ async function startArchive(courseId, scope = {}) {
                         doneBtn.classList.remove('hidden');
                         break;
                     }
+                    case 'phase': {
+                        // Workflow phase indicator: Archive → Verify → Rescrape.
+                        // We render it on the status line so the user always
+                        // sees what the server is doing right now.
+                        const phaseLabels = {
+                            archive: 'Phase 1/3 — Downloading videos',
+                            verify: 'Phase 2/3 — Verifying completeness',
+                            rescrape: 'Phase 3/3 — Re-scraping transcripts',
+                        };
+                        statusLine.textContent = phaseLabels[event.phase] || event.label || event.phase;
+                        if (event.phase === 'verify' || event.phase === 'rescrape') {
+                            // Archive done — reset progress bar for the new phase.
+                            progressFill.style.width = '0%';
+                            currentLecture.textContent = '';
+                        }
+                        break;
+                    }
+                    case 'verify-summary': {
+                        // Render a compact one-line summary; full numbers
+                        // land in the final Done block.
+                        const parts = [`${event.scopeLectureCount} lectures in scope`];
+                        if (event.failureCount > 0) parts.push(`${event.failureCount} per-video failures across ${event.failureLectureCount} lecture(s)`);
+                        if (event.incompleteSlotCount > 0) parts.push(`${event.incompleteSlotCount} DOM slot(s) still empty`);
+                        if (event.failureCount === 0 && event.incompleteSlotCount === 0) parts.push('all archived cleanly');
+                        currentLecture.textContent = parts.join(' · ');
+                        break;
+                    }
+                    case 'rescrape-progress': {
+                        currentLecture.textContent = `[${event.current}/${event.total}] ${event.title}`;
+                        progressFill.style.width = `${((event.current - 1) / Math.max(event.total, 1)) * 100}%`;
+                        break;
+                    }
+                    case 'rescrape-error': {
+                        console.warn(`[rescrape] lecture ${event.lectureId} "${event.lecture}": ${event.error}`);
+                        break;
+                    }
                     case 'error':
                         statusLine.textContent = `Error: ${event.error}`;
                         cancelBtn.classList.add('hidden');
                         doneBtn.classList.remove('hidden');
                         break;
-                    case 'done':
-                        // Stream complete — if summary hasn't shown yet, show done button
+                    case 'done': {
+                        // Final event of the whole workflow. The archive's
+                        // 'summary' event already rendered the videos block;
+                        // append rescrape stats if present.
+                        progressFill.style.width = '100%';
+                        if (event.rescrape) {
+                            summary.classList.remove('hidden');
+                            const existing = summary.innerHTML;
+                            const rescrapeBlock = `
+                                <h4 class="archive-failures-title">Re-scraped transcripts</h4>
+                                <ul>
+                                    <li>Processed: ${event.rescrape.processed}</li>
+                                    <li>Failed: ${event.rescrape.failed}</li>
+                                    <li>Of total: ${event.rescrape.total}</li>
+                                </ul>`;
+                            // If the archive 'summary' event never fired (e.g. early error),
+                            // make sure the summary block at least exists.
+                            if (!existing) summary.innerHTML = '<h3>Summary</h3>';
+                            summary.innerHTML += rescrapeBlock;
+                            statusLine.textContent = event.aborted ? 'Cancelled.' : 'Done.';
+                            currentLecture.textContent = '';
+                        }
                         if (doneBtn.classList.contains('hidden')) {
                             cancelBtn.classList.add('hidden');
                             doneBtn.classList.remove('hidden');
                         }
                         break;
+                    }
                 }
             }
         }

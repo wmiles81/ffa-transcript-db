@@ -1022,7 +1022,9 @@ app.post('/api/courses/:id/archive-videos', async (req, res) => {
     });
 
     try {
-        const { error } = await archiveCourseVideos(courseId, {
+        // ---------- Phase 1: Archive ----------
+        res.write(`data: ${JSON.stringify({ type: 'phase', phase: 'archive', label: 'Downloading videos' })}\n\n`);
+        const archiveResult = await archiveCourseVideos(courseId, {
             force,
             sectionId,
             classNumber,
@@ -1031,8 +1033,100 @@ app.post('/api/courses/:id/archive-videos', async (req, res) => {
                 res.write(`data: ${JSON.stringify(event)}\n\n`);
             },
         });
-        if (error) res.write(`data: ${JSON.stringify({ type: 'error', error })}\n\n`);
-        res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+        if (archiveResult.error) {
+            res.write(`data: ${JSON.stringify({ type: 'error', error: archiveResult.error })}\n\n`);
+            res.write(`data: ${JSON.stringify({ type: 'done', archive: archiveResult.summary, aborted: !!archiveResult.interrupted })}\n\n`);
+            return;
+        }
+        if (archiveResult.interrupted || controller.signal.aborted) {
+            res.write(`data: ${JSON.stringify({ type: 'done', archive: archiveResult.summary, aborted: true })}\n\n`);
+            return;
+        }
+
+        // ---------- Phase 2: Verify ----------
+        // Query the scope to surface what still looks incomplete. Same scope
+        // filters as the archive (section_id, class_number, exclude removed
+        // and "Start" nav artifacts). No mutations — purely informational.
+        res.write(`data: ${JSON.stringify({ type: 'phase', phase: 'verify', label: 'Verifying completeness' })}\n\n`);
+        const db = getDb();
+        const scopeWhere = ['cl.course_id = ?', "(cl.removed_at IS NULL OR cl.removed_at = '')", "cl.title != 'Start'", "cl.title NOT LIKE '%Check Out the FFA Free Community Classes%'"];
+        const scopeParams = [courseId];
+        if (sectionId != null) { scopeWhere.push('cl.section_id = ?'); scopeParams.push(sectionId); }
+        if (classNumber != null && classNumber !== '') { scopeWhere.push('cl.class_number = ?'); scopeParams.push(String(classNumber)); }
+        const scopeLectures = db.prepare(
+            `SELECT cl.id, cl.title, cl.video_local_paths, cl.video_embed_ids
+             FROM course_lectures cl WHERE ${scopeWhere.join(' AND ')} ORDER BY cl.section_id, cl.position`
+        ).all(...scopeParams);
+        const failureRows = scopeLectures.length === 0 ? [] : db.prepare(
+            `SELECT lecture_id, video_index, error_message FROM archive_failures
+             WHERE lecture_id IN (${scopeLectures.map(() => '?').join(',')})`
+        ).all(...scopeLectures.map(l => l.id));
+        const failureLectureIds = new Set(failureRows.map(r => r.lecture_id));
+        let incompleteSlots = 0;
+        for (const l of scopeLectures) {
+            let recordedCount = 0;
+            let embedCount = 0;
+            try {
+                const paths = JSON.parse(l.video_local_paths || '[]');
+                if (Array.isArray(paths)) recordedCount = paths.length;
+            } catch { /* ignore */ }
+            try {
+                const ids = JSON.parse(l.video_embed_ids || '[]');
+                if (Array.isArray(ids)) embedCount = ids.length;
+            } catch { /* ignore */ }
+            if (embedCount > recordedCount) incompleteSlots += (embedCount - recordedCount);
+        }
+        res.write(`data: ${JSON.stringify({
+            type: 'verify-summary',
+            scopeLectureCount: scopeLectures.length,
+            failureCount: failureRows.length,
+            failureLectureCount: failureLectureIds.size,
+            incompleteSlotCount: incompleteSlots,
+        })}\n\n`);
+
+        if (controller.signal.aborted) {
+            res.write(`data: ${JSON.stringify({ type: 'done', archive: archiveResult.summary, aborted: true })}\n\n`);
+            return;
+        }
+
+        // ---------- Phase 3: Re-scrape transcripts ----------
+        // Per-lecture re-extract of .lecture-attachment DOM walk so chunks
+        // get tagged with video_index and video_embed_ids is refreshed.
+        // Runs for every lecture in scope regardless of archive success —
+        // chunks are independent of file presence.
+        res.write(`data: ${JSON.stringify({ type: 'phase', phase: 'rescrape', label: 'Re-scraping transcripts', total: scopeLectures.length })}\n\n`);
+        let rescraped = 0;
+        let rescrapeFailed = 0;
+        for (let i = 0; i < scopeLectures.length; i++) {
+            if (controller.signal.aborted) break;
+            const lec = scopeLectures[i];
+            res.write(`data: ${JSON.stringify({
+                type: 'rescrape-progress',
+                current: i + 1,
+                total: scopeLectures.length,
+                lectureId: lec.id,
+                title: lec.title,
+            })}\n\n`);
+            try {
+                await rescrapeLectureTranscripts(lec.id);
+                rescraped += 1;
+            } catch (err) {
+                rescrapeFailed += 1;
+                res.write(`data: ${JSON.stringify({
+                    type: 'rescrape-error',
+                    lectureId: lec.id,
+                    lecture: lec.title,
+                    error: err.message,
+                })}\n\n`);
+            }
+        }
+
+        res.write(`data: ${JSON.stringify({
+            type: 'done',
+            archive: archiveResult.summary,
+            rescrape: { processed: rescraped, failed: rescrapeFailed, total: scopeLectures.length },
+            aborted: controller.signal.aborted,
+        })}\n\n`);
     } catch (err) {
         res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
     } finally {
