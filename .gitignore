@@ -32,3 +32,6 @@ Thumbs.db
 
 # Playwright MCP temp files
 .playwright-mcp/
+
+# Local dev/run logs
+logs/

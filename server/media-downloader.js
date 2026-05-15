@@ -18,14 +18,24 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
     }
     if (signal?.aborted) return { skipped: true, reason: 'aborted' };
 
-    // Idempotency: trust any complete N≥1 recorded path-set with all files on
-    // disk. Single-path records used to be treated as incomplete (re-dwell
-    // every run), but once a course has been re-archived under the multi-video
-    // code the record is authoritative. Force-rescrape or force=true busts it.
+    // Idempotency: skip when every DOM slot has a recorded file on disk. The
+    // "expected slot count" is the length of video_embed_ids (set by the
+    // scraper to the number of iframes on the lecture page) — NOT recorded.
+    // length, which is sparse and reflects only what's been archived so far.
+    // Otherwise a 3-of-4 archive would be wrongly classified "already archived"
+    // and the 4th slot would never get a download attempt. Force=true still
+    // busts the skip entirely.
     if (!force && lecture.video_local_paths) {
         try {
             const recorded = JSON.parse(lecture.video_local_paths);
-            if (Array.isArray(recorded) && recorded.length >= 1) {
+            let expectedSlotCount = Array.isArray(recorded) ? recorded.length : 0;
+            if (lecture.video_embed_ids) {
+                try {
+                    const ids = JSON.parse(lecture.video_embed_ids);
+                    if (Array.isArray(ids) && ids.length > 0) expectedSlotCount = ids.length;
+                } catch { /* fall back to recorded.length */ }
+            }
+            if (Array.isArray(recorded) && recorded.length >= 1 && recorded.length >= expectedSlotCount) {
                 const allExist = recorded.every(p => {
                     try { return fs.existsSync(resolveRelative(p)); } catch { return false; }
                 });
@@ -201,6 +211,27 @@ export async function downloadLectureVideo(lecture, { onProgress = () => { }, fo
         return {
             error: `No HLS manifest could be attributed to any iframe (${m3u8Captures.length} m3u8 captures, ${manifestsByEmbed.size} distinct source embed_ids, ${liveEmbedIds.length} iframes in DOM — see server log)`,
         };
+    }
+
+    // Partial-capture diagnostic: log which iframes did NOT get an m3u8
+    // attributed so we can see whether the cause is missing captures, frame
+    // attribution returning null, or attributed-to-a-different-embed_id.
+    if (liveEmbedIds.length > 0 && masterList.length < liveEmbedIds.length) {
+        const matchedEmbedIds = new Set(masterList.map(m => m.embedId).filter(Boolean));
+        const missingEmbedIds = liveEmbedIds.filter(id => !matchedEmbedIds.has(id));
+        const unattributedCount = m3u8Captures.filter(m => !m.sourceEmbedId).length;
+        const orphanIds = [...new Set(
+            m3u8Captures
+                .filter(m => m.sourceEmbedId && !liveEmbedIds.includes(m.sourceEmbedId))
+                .map(m => m.sourceEmbedId)
+        )];
+        console.warn(`[archive] lecture ${lecture.id}: partial frame-attribution — ${masterList.length}/${liveEmbedIds.length} iframes matched`);
+        console.warn(`  matched embed_ids: ${JSON.stringify([...matchedEmbedIds])}`);
+        console.warn(`  missing embed_ids: ${JSON.stringify(missingEmbedIds)}`);
+        console.warn(`  unattributed m3u8 captures (frame URL had no /embed/ id): ${unattributedCount}`);
+        if (orphanIds.length > 0) {
+            console.warn(`  m3u8s attributed to embed_ids NOT in iframe DOM list: ${JSON.stringify(orphanIds)}`);
+        }
     }
     // Total-known signal: emit once with videoTotal so the UI can keep showing
     // "Video X/N" through the rest of the lecture instead of losing the count
